@@ -3,6 +3,7 @@ import express, { NextFunction, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as k8s from '@kubernetes/client-node';
 import { z } from 'zod';
+import { runCodexInspection, CodexInspectRequest } from './codex/runner';
 import { getAgentRunnable, AgentState, SUPPORTED_ZONES, ZONE_KUBECONFIG_MAP } from './agent/graph';
 
 const app = express();
@@ -40,6 +41,7 @@ const SkillsPayloadSchema = z
   .object({
     zone: z.string().optional(),
     namespace: z.string().optional(),
+    ticketId: z.string().optional(),
     ticketTitle: z.string().optional(),
     ticketModule: z.string().optional(),
     ticketCategory: z.string().optional(),
@@ -47,6 +49,7 @@ const SkillsPayloadSchema = z
     historyMessages: z.string().optional(),
     latestMessage: z.string().optional(),
     latestMessageImages: z.array(z.string()).optional(),
+    retrievedContext: z.unknown().optional(),
   })
   .passthrough();
 
@@ -323,6 +326,104 @@ function acquireInspectionSlot(): Promise<InspectionSlotRelease | null> {
   });
 }
 
+function sendCodexPlainText(res: Response, text: string): void {
+  res.status(200).type('text/plain; charset=utf-8').send(text);
+}
+
+app.post('/api/codex-inspect', authenticateInspectorRequest, jsonBodyParser, async (req: Request, res: Response) => {
+  let runInput: CodexInspectRequest | null = null;
+
+  try {
+    const body = SkillsPayloadSchema.parse(req.body ?? {});
+    let requestKubeconfig: string | undefined;
+    const authHeader = req.header('authorization');
+
+    if (authHeader) {
+      try {
+        requestKubeconfig = decodeRequestKubeconfig(authHeader);
+      } catch {
+        const result = await runCodexInspection({
+          zone: '',
+          namespace: '',
+          ticketId: body.ticketId ?? '',
+          ticketTitle: body.ticketTitle ?? '',
+          ticketModule: body.ticketModule ?? '',
+          ticketCategory: body.ticketCategory ?? '',
+          ticketDescription: body.ticketDescription ?? '',
+          historyMessages: body.historyMessages ?? '',
+          latestMessage: body.latestMessage ?? '',
+          latestMessageImages: body.latestMessageImages ?? [],
+          requestKubeconfig: undefined,
+          retrievedContext: body.retrievedContext,
+          inputError: 'invalid Authorization header kubeconfig encoding',
+        });
+        sendCodexPlainText(res, result.text);
+        return;
+      }
+
+      if (!requestKubeconfig || !isValidKubeconfig(requestKubeconfig)) {
+        const result = await runCodexInspection({
+          zone: '',
+          namespace: '',
+          ticketId: body.ticketId ?? '',
+          ticketTitle: body.ticketTitle ?? '',
+          ticketModule: body.ticketModule ?? '',
+          ticketCategory: body.ticketCategory ?? '',
+          ticketDescription: body.ticketDescription ?? '',
+          historyMessages: body.historyMessages ?? '',
+          latestMessage: body.latestMessage ?? '',
+          latestMessageImages: body.latestMessageImages ?? [],
+          requestKubeconfig: undefined,
+          retrievedContext: body.retrievedContext,
+          inputError: 'invalid kubeconfig content in Authorization header',
+        });
+        sendCodexPlainText(res, result.text);
+        return;
+      }
+    }
+
+    const zone = (pickQueryString(req.query.zone) ?? '').trim();
+    const namespace = (pickQueryString(req.query.namespace) ?? '').trim();
+    const inputError =
+      !zone
+        ? 'zone is required'
+        : !namespace
+          ? 'namespace is required'
+          : !SUPPORTED_ZONE_SET.has(zone)
+            ? `unsupported zone: ${zone}. supported zones: ${SUPPORTED_ZONES.join(', ')}`
+            : !requestKubeconfig
+              ? 'request kubeconfig is required'
+              : '';
+
+    runInput = {
+      zone,
+      namespace,
+      ticketId: body.ticketId ?? '',
+      ticketTitle: body.ticketTitle ?? '',
+      ticketModule: body.ticketModule ?? '',
+      ticketCategory: body.ticketCategory ?? '',
+      ticketDescription: body.ticketDescription ?? '',
+      historyMessages: body.historyMessages ?? '',
+      latestMessage: body.latestMessage ?? '',
+      latestMessageImages: body.latestMessageImages ?? [],
+      requestKubeconfig,
+      retrievedContext: body.retrievedContext,
+      inputError,
+    };
+
+    const result = await runCodexInspection(runInput);
+    sendCodexPlainText(res, result.text);
+  } catch (error) {
+    console.error('[HTTP] /api/codex-inspect unexpected error:', {
+      error: extractErrorText(error),
+      zone: runInput?.zone ?? pickQueryString(req.query.zone) ?? '',
+      namespace: runInput?.namespace ?? pickQueryString(req.query.namespace) ?? '',
+      ticketId: runInput?.ticketId ?? '',
+    });
+    sendCodexPlainText(res, '自动诊断服务暂不可用，未生成可用结论。');
+  }
+});
+
 app.post('/api/skills', authenticateInspectorRequest, jsonBodyParser, async (req: Request, res: Response) => {
   try {
     const body = SkillsPayloadSchema.parse(req.body ?? {});
@@ -424,6 +525,7 @@ async function startServer() {
   app.listen(PORT, () => {
     console.error(`[HTTP Server] Server is running on http://localhost:${PORT}`);
     console.error(`[HTTP Server] POST http://localhost:${PORT}/api/skills`);
+    console.error(`[HTTP Server] POST http://localhost:${PORT}/api/codex-inspect`);
   });
 }
 
