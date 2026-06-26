@@ -5,6 +5,13 @@ import { CodexRunConfig, CodexSandbox } from './types';
 
 const DEFAULT_CODEX_BIN = 'codex';
 const DEFAULT_CODEX_SANDBOX: CodexSandbox = 'workspace-write';
+const DEFAULT_CODEX_CHILD_BIN_DIR = path.join(os.homedir(), '.local', 'share', 'tentix-codex', 'bin');
+const DEFAULT_CODEX_CHILD_PATH = [
+  DEFAULT_CODEX_CHILD_BIN_DIR,
+  '/usr/local/bin',
+  '/usr/bin',
+  '/bin',
+].join(path.delimiter);
 const DEFAULT_CODEX_WORKSPACE_NETWORK_ACCESS = true;
 const DEFAULT_CODEX_RUN_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_MAX_CONCURRENT_RUNS = 1;
@@ -15,6 +22,7 @@ const DEFAULT_CODEX_OUTPUT_TRUNCATE_CHARS = 1_000;
 export function getCodexRunConfig(): CodexRunConfig {
   return {
     binary: (process.env.CODEX_BIN ?? DEFAULT_CODEX_BIN).trim() || DEFAULT_CODEX_BIN,
+    codexChildPath: (process.env.CODEX_CHILD_PATH ?? DEFAULT_CODEX_CHILD_PATH).trim(),
     inspectWorkdir: (process.env.CODEX_INSPECT_WORKDIR ?? '').trim(),
     codexHome: (process.env.CODEX_HOME ?? '').trim(),
     skill: (process.env.CODEX_INSPECT_SKILL ?? '').trim(),
@@ -51,6 +59,17 @@ export function validateCodexRunConfig(config: CodexRunConfig): string {
   if (!fs.existsSync(config.inspectWorkdir) || !fs.statSync(config.inspectWorkdir).isDirectory()) {
     return `CODEX_INSPECT_WORKDIR is not a directory: ${config.inspectWorkdir}`;
   }
+  if (!config.codexChildPath) {
+    return 'CODEX_CHILD_PATH is required';
+  }
+  const invalidCodexChildPathEntry = getInvalidPathDirectory(config.codexChildPath);
+  if (invalidCodexChildPathEntry) {
+    return `CODEX_CHILD_PATH contains a non-directory entry: ${invalidCodexChildPathEntry}`;
+  }
+  const exposedKubectlPath = getExecutableInPath(config.codexChildPath, 'kubectl');
+  if (exposedKubectlPath) {
+    return `CODEX_CHILD_PATH exposes kubectl: ${exposedKubectlPath}`;
+  }
   if (!config.codexHome) {
     return 'CODEX_HOME is required';
   }
@@ -60,6 +79,38 @@ export function validateCodexRunConfig(config: CodexRunConfig): string {
   if (!config.skill) {
     return 'CODEX_INSPECT_SKILL is required';
   }
+  return '';
+}
+
+function getInvalidPathDirectory(pathValue: string): string {
+  for (const entry of pathValue.split(path.delimiter)) {
+    const trimmedEntry = entry.trim();
+    if (!trimmedEntry) {
+      return '<empty>';
+    }
+    if (!fs.existsSync(trimmedEntry) || !fs.statSync(trimmedEntry).isDirectory()) {
+      return trimmedEntry;
+    }
+  }
+
+  return '';
+}
+
+function getExecutableInPath(pathValue: string, executableName: string): string {
+  for (const entry of pathValue.split(path.delimiter)) {
+    const trimmedEntry = entry.trim();
+    if (!trimmedEntry) {
+      continue;
+    }
+    const candidate = path.join(trimmedEntry, executableName);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
   return '';
 }
 

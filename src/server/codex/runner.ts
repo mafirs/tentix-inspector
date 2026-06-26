@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { constants as fsConstants } from 'fs';
 import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -154,7 +155,8 @@ async function runCodexChild(args: {
   const eventSummary = createEmptyEventSummary();
   const childEnv = buildCodexProcessEnv(config, kubeconfigPath);
   const codexArgs = buildCodexArgs(config, runWorkdir, childEnv);
-  const child = spawn(config.binary, codexArgs, {
+  const codexBinary = await resolveExecutablePath(config.binary);
+  const child = spawn(codexBinary, codexArgs, {
     cwd: runWorkdir,
     env: childEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -280,7 +282,7 @@ function buildCodexProcessEnv(
   kubeconfigPath: string
 ): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH ?? '',
+    PATH: config.codexChildPath,
     HOME: process.env.HOME ?? '',
     CODEX_HOME: config.codexHome,
     CODEX_INSPECT_WORKDIR: config.inspectWorkdir,
@@ -296,7 +298,7 @@ function buildCodexPrompt(input: CodexInspectRequest, config: CodexRunConfig): s
     `$${config.skill}`,
     '',
     '请按该 skill 的 SOP 处理下面的 Tentix 工单诊断请求。',
-    '只能使用 ByAgent 暴露的只读集群查询能力，不要直接调用原生 kubectl。',
+    '只能使用 kubectl-ByCodex-READONLY 访问 Kubernetes；不要直接调用原生 kubectl。',
     `诊断资料目录: ${config.inspectWorkdir}`,
     '诊断资料目录只用于读取 Sealos 源码、知识库和操作守则；临时文件只写入当前工作目录。',
     '最终只输出给 Tentix 参考的诊断结论纯文本，不要输出 JSON，不要输出 Markdown 表格。',
@@ -312,6 +314,40 @@ function buildCodexPrompt(input: CodexInspectRequest, config: CodexRunConfig): s
     `latestMessage: ${input.latestMessage}`,
     `latestMessageImages: ${input.latestMessageImages.join('\n')}`,
   ].join('\n');
+}
+
+async function resolveExecutablePath(binary: string): Promise<string> {
+  if (hasPathSeparator(binary)) {
+    return binary;
+  }
+
+  const parentPath = process.env.PATH ?? '';
+  for (const entry of parentPath.split(path.delimiter)) {
+    const trimmedEntry = entry.trim();
+    if (!trimmedEntry) {
+      continue;
+    }
+
+    const candidate = path.join(trimmedEntry, binary);
+    if (await canExecute(candidate)) {
+      return candidate;
+    }
+  }
+
+  return binary;
+}
+
+async function canExecute(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasPathSeparator(value: string): boolean {
+  return value.includes('/') || value.includes('\\');
 }
 
 function toTomlInlineStringMap(values: NodeJS.ProcessEnv): string {

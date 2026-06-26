@@ -29,6 +29,7 @@ export interface CodexInspectRequest {
 
 export interface CodexRunConfig {
   binary: string;
+  codexChildPath: string;
   inspectWorkdir: string;
   codexHome: string;
   skill: string;

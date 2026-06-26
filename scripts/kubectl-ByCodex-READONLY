@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WRAPPER_NAME="kubectl-ByCodex-READONLY"
+readonly REAL_KUBECTL_PATH="${HOME}/.local/share/tentix-codex/internal/kubectl"
+
+deny() {
+  printf 'denied: %s\n' "$1" >&2
+  exit 64
+}
+
+fail() {
+  printf '%s: %s\n' "$WRAPPER_NAME" "$1" >&2
+  exit 1
+}
+
+realpath_or_raw() {
+  local path="$1"
+
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$path" 2>/dev/null || printf '%s\n' "$path"
+    return
+  fi
+
+  printf '%s\n' "$path"
+}
+
+find_real_kubectl() {
+  local self_real
+  local candidate
+  local candidate_real
+
+  self_real="$(realpath_or_raw "${BASH_SOURCE[0]}")"
+
+  for candidate in "$REAL_KUBECTL_PATH"; do
+    if [[ ! -x "$candidate" ]]; then
+      continue
+    fi
+
+    candidate_real="$(realpath_or_raw "$candidate")"
+    if [[ "$candidate_real" == "$self_real" ]]; then
+      continue
+    fi
+
+    printf '%s\n' "$candidate"
+    return 0
+  done
+
+  return 1
+}
+
+is_readonly_subcommand() {
+  case "$1" in
+    get|describe|logs|top|explain|version|api-resources|cluster-info|exec)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_forbidden_exec_option() {
+  case "$1" in
+    -i|-t|-it|-ti|--stdin|--tty|--stdin=*|--tty=*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_allowed_exec_command() {
+  case "$1" in
+    ls|cat|head|tail|wc|stat|du|ss|netstat|ps|top|ip|route|df|free|id|hostname|uname|pwd|whoami|date|uptime)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+contains_forbidden_shell_meta() {
+  local value="$1"
+
+  [[ "$value" == *"|"* ]] && return 0
+  [[ "$value" == *";"* ]] && return 0
+  [[ "$value" == *"&"* ]] && return 0
+  [[ "$value" == *"<"* ]] && return 0
+  [[ "$value" == *">"* ]] && return 0
+  [[ "$value" == *'`'* ]] && return 0
+  [[ "$value" == *'$'* ]] && return 0
+  [[ "$value" == *"\\"* ]] && return 0
+
+  return 1
+}
+
+is_forbidden_path() {
+  case "$1" in
+    /proc*|/sys*|/dev*|/run/secrets*|/var/run/secrets*|/var/lib/kubelet*|/var/lib/rancher*|/root/.ssh*|/home/*/.ssh*|/etc/shadow|/run/containerd*|/var/run/docker.sock|../*|*/../*|*/..)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_name_value() {
+  local label="$1"
+  local value="$2"
+
+  if [[ -z "$value" ]]; then
+    deny "${label} value is required"
+  fi
+  if [[ "$value" == -* ]]; then
+    deny "${label} value must not start with '-'"
+  fi
+  if [[ "$value" == *"/"* ]]; then
+    deny "${label} value must not contain '/'"
+  fi
+}
+
+validate_exec_args() {
+  local args=("$@")
+  local arg_count="${#args[@]}"
+  local separator_index=-1
+  local i
+  local idx
+  local pod
+  local namespace_seen=0
+  local container_seen=0
+  local arg
+  local value
+  local command_name
+
+  if (( arg_count == 0 )); then
+    deny "kubectl exec requires a pod target"
+  fi
+
+  for (( i = 0; i < arg_count; i++ )); do
+    if [[ "${args[$i]}" == "--" ]]; then
+      separator_index="$i"
+      break
+    fi
+  done
+
+  if (( separator_index < 0 )); then
+    deny "kubectl exec requires -- before container command"
+  fi
+  if (( separator_index == 0 )); then
+    deny "kubectl exec requires a pod target"
+  fi
+  if (( separator_index + 1 >= arg_count )); then
+    deny "kubectl exec requires a container command"
+  fi
+
+  pod="${args[0]}"
+  validate_name_value "pod" "$pod"
+
+  idx=1
+  while (( idx < separator_index )); do
+    arg="${args[$idx]}"
+
+    if is_forbidden_exec_option "$arg"; then
+      deny "interactive kubectl exec flags are not allowed"
+    fi
+
+    case "$arg" in
+      -n|--namespace)
+        if (( idx + 1 >= separator_index )); then
+          deny "namespace value is required"
+        fi
+        if (( namespace_seen != 0 )); then
+          deny "namespace specified more than once"
+        fi
+        value="${args[$((idx + 1))]}"
+        validate_name_value "namespace" "$value"
+        namespace_seen=1
+        idx=$((idx + 2))
+        ;;
+      --namespace=*)
+        if (( namespace_seen != 0 )); then
+          deny "namespace specified more than once"
+        fi
+        value="${arg#--namespace=}"
+        validate_name_value "namespace" "$value"
+        namespace_seen=1
+        idx=$((idx + 1))
+        ;;
+      -c|--container)
+        if (( idx + 1 >= separator_index )); then
+          deny "container value is required"
+        fi
+        if (( container_seen != 0 )); then
+          deny "container specified more than once"
+        fi
+        value="${args[$((idx + 1))]}"
+        validate_name_value "container" "$value"
+        container_seen=1
+        idx=$((idx + 2))
+        ;;
+      --container=*)
+        if (( container_seen != 0 )); then
+          deny "container specified more than once"
+        fi
+        value="${arg#--container=}"
+        validate_name_value "container" "$value"
+        container_seen=1
+        idx=$((idx + 1))
+        ;;
+      *)
+        deny "unsupported kubectl exec target argument: ${arg}"
+        ;;
+    esac
+  done
+
+  command_name="${args[$((separator_index + 1))]}"
+  if ! is_allowed_exec_command "$command_name"; then
+    deny "exec command is not in readonly allowlist"
+  fi
+
+  for (( i = separator_index + 1; i < arg_count; i++ )); do
+    value="${args[$i]}"
+
+    if contains_forbidden_shell_meta "$value"; then
+      deny "forbidden shell metacharacter"
+    fi
+    if is_forbidden_path "$value"; then
+      deny "forbidden path"
+    fi
+  done
+}
+
+main() {
+  local kubectl_bin
+  local subcommand
+
+  if (( $# == 0 )); then
+    deny "expected command format: ${WRAPPER_NAME} <readonly-subcommand> ..."
+  fi
+
+  subcommand="$1"
+  shift
+
+  if ! is_readonly_subcommand "$subcommand"; then
+    deny "unsupported kubectl subcommand"
+  fi
+
+  if [[ "$subcommand" == "exec" ]]; then
+    validate_exec_args "$@"
+  fi
+
+  kubectl_bin="$(find_real_kubectl)" || fail "real kubectl not found"
+  exec "$kubectl_bin" "$subcommand" "$@"
+}
+
+main "$@"
