@@ -20,6 +20,14 @@ type PendingRun = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+type CodexLiveLogContext = {
+  runId: string;
+  input: CodexInspectRequest;
+  config: CodexRunConfig;
+  startedAt: number;
+  itemStarts: Map<string, number>;
+};
+
 type ChildResult = {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -156,11 +164,19 @@ async function runCodexChild(args: {
   const childEnv = buildCodexProcessEnv(config, kubeconfigPath, input.namespace);
   const codexArgs = buildCodexArgs(config, runWorkdir, childEnv);
   const codexBinary = await resolveExecutablePath(config.binary);
+  const childStartedAt = Date.now();
   const child = spawn(codexBinary, codexArgs, {
     cwd: runWorkdir,
     env: childEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  const liveLogContext: CodexLiveLogContext = {
+    runId,
+    input,
+    config,
+    startedAt: childStartedAt,
+    itemStarts: new Map(),
+  };
 
   let stdoutBuffer = '';
   let finalText = '';
@@ -173,7 +189,12 @@ async function runCodexChild(args: {
     while (newlineIndex >= 0) {
       const line = stdoutBuffer.slice(0, newlineIndex).trim();
       stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
-      const parsedText = handleCodexJsonlLine(line, eventSummary, config.outputTruncateChars);
+      const parsedText = handleCodexJsonlLine(
+        line,
+        eventSummary,
+        config.outputTruncateChars,
+        liveLogContext
+      );
       if (parsedText) {
         finalText = parsedText;
       }
@@ -183,7 +204,9 @@ async function runCodexChild(args: {
 
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk: string) => {
-    eventSummary.lastStderr = truncate(chunk, config.outputTruncateChars);
+    const stderrText = truncate(chunk.trim(), config.outputTruncateChars);
+    eventSummary.lastStderr = stderrText;
+    logCodexLiveLine(liveLogContext, 'stderr', stderrText);
   });
 
   child.stdin.end(buildCodexPrompt(input, config), 'utf8');
@@ -191,6 +214,11 @@ async function runCodexChild(args: {
   return await new Promise((resolve) => {
     const timeout = setTimeout(() => {
       timedOut = true;
+      logCodexLiveLine(
+        liveLogContext,
+        'timeout',
+        `terminating codex after ${formatDuration(config.timeoutMs)}`
+      );
       child.kill('SIGTERM');
       setTimeout(() => {
         if (!settled && child.exitCode === null && child.signalCode === null) {
@@ -203,6 +231,7 @@ async function runCodexChild(args: {
       clearTimeout(timeout);
       settled = true;
       eventSummary.lastError = truncate(getErrorMessage(error), config.outputTruncateChars);
+      logCodexLiveLine(liveLogContext, 'process error', eventSummary.lastError);
       resolve({
         exitCode: null,
         signal: null,
@@ -220,12 +249,18 @@ async function runCodexChild(args: {
         const parsedText = handleCodexJsonlLine(
           trailingLine,
           eventSummary,
-          config.outputTruncateChars
+          config.outputTruncateChars,
+          liveLogContext
         );
         if (parsedText) {
           finalText = parsedText;
         }
       }
+      logCodexLiveLine(
+        liveLogContext,
+        'process exited',
+        `exitCode=${exitCode ?? 'null'} signal=${signal ?? 'null'}`
+      );
       resolve({
         exitCode,
         signal,
@@ -235,17 +270,7 @@ async function runCodexChild(args: {
       });
     });
 
-    console.error('[Codex] run spawned:', {
-      runId,
-      pid: child.pid ?? null,
-      zone: input.zone,
-      namespace: input.namespace,
-      ticketId: input.ticketId,
-      sandbox: config.sandbox,
-      runWorkdir,
-      inspectWorkdir: config.inspectWorkdir,
-      readonlyKubectlCommand: config.readonlyKubectlCommand,
-    });
+    logCodexRunStart(liveLogContext, child.pid ?? null, runWorkdir);
   });
 }
 
@@ -369,7 +394,8 @@ function toTomlInlineStringMap(values: NodeJS.ProcessEnv): string {
 function handleCodexJsonlLine(
   line: string,
   eventSummary: CodexEventSummary,
-  truncateChars: number
+  truncateChars: number,
+  logContext: CodexLiveLogContext
 ): string {
   if (!line) {
     return '';
@@ -380,17 +406,23 @@ function handleCodexJsonlLine(
     raw = JSON.parse(line);
   } catch {
     eventSummary.anomalies += 1;
+    logCodexLiveLine(logContext, 'event warning', 'ignored invalid JSONL event');
     return '';
   }
 
   if (!isRecord(raw)) {
     eventSummary.anomalies += 1;
+    logCodexLiveLine(logContext, 'event warning', 'ignored non-object JSONL event');
     return '';
   }
+
+  const eventType = getStringValue(raw, 'type');
 
   if (typeof raw.thread_id === 'string') {
     eventSummary.threadId = raw.thread_id;
   }
+
+  logCodexLifecycleEvent(eventType, raw, logContext, truncateChars);
 
   if (typeof raw.message === 'string') {
     return raw.message;
@@ -404,21 +436,16 @@ function handleCodexJsonlLine(
     return '';
   }
 
+  logCodexItemEvent(eventType, item, logContext, truncateChars);
+
   if (item.type === 'agent_message' && typeof item.text === 'string') {
     return item.text;
   }
 
-  if (item.type === 'command_execution') {
+  if (item.type === 'command_execution' && eventType !== 'item.started') {
     const command = typeof item.command === 'string' ? item.command : '';
-    const output =
-      typeof item.output === 'string'
-        ? item.output
-        : typeof item.aggregated_output === 'string'
-          ? item.aggregated_output
-          : typeof item.stdout === 'string'
-            ? item.stdout
-            : '';
-    const exitCode = typeof item.exit_code === 'number' ? item.exit_code : 0;
+    const output = getCommandOutput(item);
+    const exitCode = getExitCode(item) ?? 0;
 
     eventSummary.commandCount += 1;
     eventSummary.commands.push({
@@ -429,6 +456,208 @@ function handleCodexJsonlLine(
   }
 
   return '';
+}
+
+function logCodexRunStart(
+  context: CodexLiveLogContext,
+  pid: number | null,
+  runWorkdir: string
+): void {
+  console.error([
+    `[Codex][${context.runId}] run started`,
+    `  pid: ${pid ?? 'unknown'}`,
+    `  ticketId: ${context.input.ticketId}`,
+    `  zone: ${context.input.zone}`,
+    `  namespace: ${context.input.namespace}`,
+    `  sandbox: ${context.config.sandbox}`,
+    `  runWorkdir: ${runWorkdir}`,
+    `  inspectWorkdir: ${context.config.inspectWorkdir}`,
+    `  readonlyKubectlCommand: ${context.config.readonlyKubectlCommand}`,
+  ].join('\n'));
+}
+
+function logCodexLifecycleEvent(
+  eventType: string,
+  raw: Record<string, unknown>,
+  context: CodexLiveLogContext,
+  truncateChars: number
+): void {
+  if (eventType === 'thread.started') {
+    logCodexLiveLine(context, 'thread started', getStringValue(raw, 'thread_id'));
+    return;
+  }
+  if (eventType === 'turn.started') {
+    logCodexLiveLine(context, 'turn started', 'codex started processing');
+    return;
+  }
+  if (eventType === 'turn.completed') {
+    const usageText = getUsageText(raw);
+    logCodexLiveLine(context, 'turn completed', usageText || 'codex turn completed');
+    return;
+  }
+  if (eventType === 'turn.failed') {
+    logCodexLiveLine(context, 'turn failed', truncate(getEventText(raw), truncateChars));
+    return;
+  }
+  if (eventType === 'error') {
+    logCodexLiveLine(context, 'error', truncate(getEventText(raw), truncateChars));
+  }
+}
+
+function logCodexItemEvent(
+  eventType: string,
+  item: Record<string, unknown>,
+  context: CodexLiveLogContext,
+  truncateChars: number
+): void {
+  const itemType = getStringValue(item, 'type') || 'item';
+  const itemId = getStringValue(item, 'id');
+
+  if (eventType === 'item.started') {
+    if (itemId) {
+      context.itemStarts.set(itemId, Date.now());
+    }
+    if (itemType === 'command_execution') {
+      logCodexLiveLine(
+        context,
+        'command started',
+        truncate(getStringValue(item, 'command') || '<empty command>', truncateChars)
+      );
+      return;
+    }
+    logCodexLiveLine(
+      context,
+      `${formatItemType(itemType)} started`,
+      truncate(getItemText(item) || 'started', truncateChars)
+    );
+    return;
+  }
+
+  if (eventType === 'item.completed') {
+    const durationText = itemId ? getCompletedItemDuration(context, itemId) : '';
+    if (itemType === 'command_execution') {
+      logCodexCommandCompleted(item, context, durationText, truncateChars);
+      return;
+    }
+    logCodexLiveLine(
+      context,
+      `${formatItemType(itemType)} completed`,
+      truncate(getItemText(item) || `completed${durationText ? ` in ${durationText}` : ''}`, truncateChars)
+    );
+    return;
+  }
+
+  if (eventType.startsWith('item.')) {
+    logCodexLiveLine(
+      context,
+      `${formatItemType(itemType)} ${eventType.slice('item.'.length)}`,
+      truncate(getItemText(item) || eventType, truncateChars)
+    );
+  }
+}
+
+function logCodexCommandCompleted(
+  item: Record<string, unknown>,
+  context: CodexLiveLogContext,
+  durationText: string,
+  truncateChars: number
+): void {
+  const command = truncate(getStringValue(item, 'command') || '<empty command>', truncateChars);
+  const output = truncate(getCommandOutput(item).trim(), truncateChars);
+  const exitCode = getExitCode(item);
+  const statusText = exitCode === null ? 'exit unknown' : `exit ${exitCode}`;
+  const timingText = durationText ? ` in ${durationText}` : '';
+  const outputText = output ? `\n  output:\n    ${indentMultiline(output)}` : '';
+  logCodexLiveLine(
+    context,
+    'command completed',
+    `${statusText}${timingText}: ${command}${outputText}`
+  );
+}
+
+function logCodexLiveLine(
+  context: CodexLiveLogContext,
+  label: string,
+  message: string
+): void {
+  const cleanMessage = message.trim();
+  if (!cleanMessage) {
+    return;
+  }
+  const elapsed = formatDuration(Date.now() - context.startedAt);
+  console.error(`[Codex][${context.runId}][+${elapsed}] ${label}: ${indentMultiline(cleanMessage)}`);
+}
+
+function getCompletedItemDuration(context: CodexLiveLogContext, itemId: string): string {
+  const startedAt = context.itemStarts.get(itemId);
+  if (!startedAt) {
+    return '';
+  }
+  context.itemStarts.delete(itemId);
+  return formatDuration(Date.now() - startedAt);
+}
+
+function getCommandOutput(item: Record<string, unknown>): string {
+  return (
+    getStringValue(item, 'output') ||
+    getStringValue(item, 'aggregated_output') ||
+    getStringValue(item, 'stdout')
+  );
+}
+
+function getExitCode(item: Record<string, unknown>): number | null {
+  const exitCode = item.exit_code;
+  return typeof exitCode === 'number' ? exitCode : null;
+}
+
+function getItemText(item: Record<string, unknown>): string {
+  return (
+    getStringValue(item, 'text') ||
+    getStringValue(item, 'message') ||
+    getStringValue(item, 'summary') ||
+    getStringValue(item, 'title') ||
+    getStringValue(item, 'name') ||
+    getStringValue(item, 'query') ||
+    getStringValue(item, 'status')
+  );
+}
+
+function getEventText(raw: Record<string, unknown>): string {
+  return (
+    getStringValue(raw, 'message') ||
+    getStringValue(raw, 'error') ||
+    getStringValue(raw, 'error_message') ||
+    getStringValue(raw, 'text')
+  );
+}
+
+function getUsageText(raw: Record<string, unknown>): string {
+  const usage = isRecord(raw.usage) ? raw.usage : null;
+  if (!usage) {
+    return '';
+  }
+
+  const parts = [
+    getNumberPart(usage, 'input_tokens', 'input'),
+    getNumberPart(usage, 'cached_input_tokens', 'cached'),
+    getNumberPart(usage, 'output_tokens', 'output'),
+    getNumberPart(usage, 'reasoning_output_tokens', 'reasoning'),
+  ].filter(Boolean);
+  return parts.length ? `usage: ${parts.join(', ')}` : '';
+}
+
+function getNumberPart(record: Record<string, unknown>, key: string, label: string): string {
+  const value = record[key];
+  return typeof value === 'number' ? `${label}=${value}` : '';
+}
+
+function getStringValue(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function formatItemType(itemType: string): string {
+  return itemType.replace(/_/g, ' ');
 }
 
 function getStatusFromChildResult(result: ChildResult): CodexRunStatus {
@@ -534,23 +763,45 @@ function logCodexRun(args: {
   finalTextLength: number;
   eventSummary: CodexEventSummary;
 }): void {
-  console.error('[Codex] run completed:', JSON.stringify({
-    runId: args.runId,
-    ticketId: args.input.ticketId,
-    zone: args.input.zone,
-    namespace: args.input.namespace,
-    status: args.status,
-    reason: args.reason,
-    exitCode: args.exitCode,
-    signal: args.signal,
-    durationMs: Date.now() - args.startedAt,
-    finalTextLength: args.finalTextLength,
-    sandbox: args.config.sandbox,
-    inspectWorkdir: args.config.inspectWorkdir,
-    readonlyKubectlCommand: args.config.readonlyKubectlCommand,
-    hasKubeconfig: Boolean(args.input.requestKubeconfig),
-    eventSummary: args.eventSummary,
-  }));
+  const lines = [
+    `[Codex][${args.runId}] run completed`,
+    `  ticketId: ${args.input.ticketId}`,
+    `  zone: ${args.input.zone}`,
+    `  namespace: ${args.input.namespace}`,
+    `  status: ${args.status}`,
+    `  exitCode: ${args.exitCode ?? 'null'}`,
+    `  signal: ${args.signal ?? 'null'}`,
+    `  duration: ${formatDuration(Date.now() - args.startedAt)}`,
+    `  finalTextLength: ${args.finalTextLength}`,
+    `  sandbox: ${args.config.sandbox}`,
+    `  inspectWorkdir: ${args.config.inspectWorkdir}`,
+    `  readonlyKubectlCommand: ${args.config.readonlyKubectlCommand}`,
+    `  hasKubeconfig: ${Boolean(args.input.requestKubeconfig)}`,
+    `  threadId: ${args.eventSummary.threadId ?? ''}`,
+    `  commandCount: ${args.eventSummary.commandCount}`,
+    `  anomalies: ${args.eventSummary.anomalies}`,
+  ];
+
+  if (args.reason) {
+    lines.push(`  reason: ${args.reason}`);
+  }
+  if (args.eventSummary.lastError) {
+    lines.push(`  lastError: ${indentMultiline(args.eventSummary.lastError)}`);
+  }
+  if (args.eventSummary.lastStderr) {
+    lines.push(`  lastStderr: ${indentMultiline(args.eventSummary.lastStderr)}`);
+  }
+  if (args.eventSummary.commands.length) {
+    lines.push('  commands:');
+    for (const [index, command] of args.eventSummary.commands.slice(0, 10).entries()) {
+      lines.push(`    ${index + 1}. ${command.isError ? 'failed' : 'ok'} ${command.command}`);
+    }
+    if (args.eventSummary.commands.length > 10) {
+      lines.push(`    ... ${args.eventSummary.commands.length - 10} more`);
+    }
+  }
+
+  console.error(lines.join('\n'));
 }
 
 function createEmptyEventSummary(): CodexEventSummary {
@@ -565,6 +816,14 @@ function createEmptyEventSummary(): CodexEventSummary {
 
 function truncate(value: string, maxChars: number): string {
   return value.length > maxChars ? value.slice(0, maxChars) : value;
+}
+
+function indentMultiline(value: string): string {
+  return value.replace(/\r/g, '').replace(/\n/g, '\n  ');
+}
+
+function formatDuration(durationMs: number): string {
+  return durationMs < 1_000 ? `${durationMs}ms` : `${(durationMs / 1_000).toFixed(1)}s`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
