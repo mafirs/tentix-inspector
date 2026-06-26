@@ -51,13 +51,53 @@ find_real_kubectl() {
 
 is_readonly_subcommand() {
   case "$1" in
-    get|describe|logs|top|explain|version|api-resources|cluster-info|exec)
+    get|describe|logs|top|exec)
       return 0
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+is_forbidden_global_option() {
+  case "$1" in
+    -A|--all-namespaces|--all-namespaces=*|--raw|--raw=*|--kubeconfig|--kubeconfig=*|--context|--context=*|--server|--server=*|--token|--token=*|--as|--as=*|--as-group|--as-group=*|--user|--user=*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+normalize_resource_kind() {
+  local value="$1"
+
+  value="${value%%,*}"
+  value="${value%%/*}"
+  printf '%s\n' "$value"
+}
+
+is_cluster_scoped_resource() {
+  case "$(normalize_resource_kind "$1")" in
+    node|nodes|no|persistentvolume|persistentvolumes|pv|namespace|namespaces|ns|storageclass|storageclasses|sc|clusterrole|clusterroles|clusterrolebinding|clusterrolebindings|customresourcedefinition|customresourcedefinitions|crd|crds|apiservice|apiservices|priorityclass|priorityclasses|pc|volumeattachment|volumeattachments|csinode|csinodes|csidriver|csidrivers|mutatingwebhookconfiguration|mutatingwebhookconfigurations|validatingwebhookconfiguration|validatingwebhookconfigurations|podsecuritypolicy|podsecuritypolicies|psp)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_namespace_value() {
+  local value="$1"
+
+  validate_name_value "namespace" "$value"
+
+  if [[ -n "${CODEX_TARGET_NAMESPACE:-}" && "$value" != "$CODEX_TARGET_NAMESPACE" ]]; then
+    deny "namespace must match request namespace"
+  fi
 }
 
 is_forbidden_exec_option() {
@@ -123,6 +163,65 @@ validate_name_value() {
   fi
 }
 
+validate_namespaced_args() {
+  local check_resource="$1"
+  shift
+  local args=("$@")
+  local namespace_seen=0
+  local resource_seen=0
+  local arg
+  local value
+  local idx=0
+
+  while (( idx < ${#args[@]} )); do
+    arg="${args[$idx]}"
+
+    if is_forbidden_global_option "$arg"; then
+      deny "cluster-level kubectl option is not allowed"
+    fi
+
+    case "$arg" in
+      -n|--namespace)
+        if (( idx + 1 >= ${#args[@]} )); then
+          deny "namespace value is required"
+        fi
+        if (( namespace_seen != 0 )); then
+          deny "namespace specified more than once"
+        fi
+        value="${args[$((idx + 1))]}"
+        validate_namespace_value "$value"
+        namespace_seen=1
+        idx=$((idx + 2))
+        ;;
+      --namespace=*)
+        if (( namespace_seen != 0 )); then
+          deny "namespace specified more than once"
+        fi
+        value="${arg#--namespace=}"
+        validate_namespace_value "$value"
+        namespace_seen=1
+        idx=$((idx + 1))
+        ;;
+      -*)
+        idx=$((idx + 1))
+        ;;
+      *)
+        if (( check_resource != 0 && resource_seen == 0 )); then
+          if is_cluster_scoped_resource "$arg"; then
+            deny "cluster-scoped resource is not allowed"
+          fi
+          resource_seen=1
+        fi
+        idx=$((idx + 1))
+        ;;
+    esac
+  done
+
+  if (( namespace_seen == 0 )); then
+    deny "namespace is required"
+  fi
+}
+
 validate_exec_args() {
   local args=("$@")
   local arg_count="${#args[@]}"
@@ -164,6 +263,10 @@ validate_exec_args() {
   while (( idx < separator_index )); do
     arg="${args[$idx]}"
 
+    if is_forbidden_global_option "$arg"; then
+      deny "cluster-level kubectl option is not allowed"
+    fi
+
     if is_forbidden_exec_option "$arg"; then
       deny "interactive kubectl exec flags are not allowed"
     fi
@@ -177,7 +280,7 @@ validate_exec_args() {
           deny "namespace specified more than once"
         fi
         value="${args[$((idx + 1))]}"
-        validate_name_value "namespace" "$value"
+        validate_namespace_value "$value"
         namespace_seen=1
         idx=$((idx + 2))
         ;;
@@ -186,7 +289,7 @@ validate_exec_args() {
           deny "namespace specified more than once"
         fi
         value="${arg#--namespace=}"
-        validate_name_value "namespace" "$value"
+        validate_namespace_value "$value"
         namespace_seen=1
         idx=$((idx + 1))
         ;;
@@ -216,6 +319,10 @@ validate_exec_args() {
         ;;
     esac
   done
+
+  if (( namespace_seen == 0 )); then
+    deny "namespace is required"
+  fi
 
   command_name="${args[$((separator_index + 1))]}"
   if ! is_allowed_exec_command "$command_name"; then
@@ -249,9 +356,17 @@ main() {
     deny "unsupported kubectl subcommand"
   fi
 
-  if [[ "$subcommand" == "exec" ]]; then
-    validate_exec_args "$@"
-  fi
+  case "$subcommand" in
+    get|describe|top)
+      validate_namespaced_args 1 "$@"
+      ;;
+    logs)
+      validate_namespaced_args 0 "$@"
+      ;;
+    exec)
+      validate_exec_args "$@"
+      ;;
+  esac
 
   kubectl_bin="$(find_real_kubectl)" || fail "real kubectl not found"
   exec "$kubectl_bin" "$subcommand" "$@"

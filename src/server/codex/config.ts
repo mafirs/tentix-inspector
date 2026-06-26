@@ -12,6 +12,7 @@ const DEFAULT_CODEX_CHILD_PATH = [
   '/usr/bin',
   '/bin',
 ].join(path.delimiter);
+const DEFAULT_CODEX_READONLY_KUBECTL_COMMAND = 'kubectl-ByCodex-READONLY';
 const DEFAULT_CODEX_WORKSPACE_NETWORK_ACCESS = true;
 const DEFAULT_CODEX_RUN_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_MAX_CONCURRENT_RUNS = 1;
@@ -23,6 +24,9 @@ export function getCodexRunConfig(): CodexRunConfig {
   return {
     binary: (process.env.CODEX_BIN ?? DEFAULT_CODEX_BIN).trim() || DEFAULT_CODEX_BIN,
     codexChildPath: (process.env.CODEX_CHILD_PATH ?? DEFAULT_CODEX_CHILD_PATH).trim(),
+    readonlyKubectlCommand: (
+      process.env.CODEX_READONLY_KUBECTL_COMMAND ?? DEFAULT_CODEX_READONLY_KUBECTL_COMMAND
+    ).trim(),
     inspectWorkdir: (process.env.CODEX_INSPECT_WORKDIR ?? '').trim(),
     codexHome: (process.env.CODEX_HOME ?? '').trim(),
     skill: (process.env.CODEX_INSPECT_SKILL ?? '').trim(),
@@ -66,9 +70,25 @@ export function validateCodexRunConfig(config: CodexRunConfig): string {
   if (invalidCodexChildPathEntry) {
     return `CODEX_CHILD_PATH contains a non-directory entry: ${invalidCodexChildPathEntry}`;
   }
+  if (!config.readonlyKubectlCommand) {
+    return 'CODEX_READONLY_KUBECTL_COMMAND is required';
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(config.readonlyKubectlCommand)) {
+    return `CODEX_READONLY_KUBECTL_COMMAND is unsafe: ${config.readonlyKubectlCommand}`;
+  }
+  if (config.readonlyKubectlCommand === 'kubectl') {
+    return 'CODEX_READONLY_KUBECTL_COMMAND must not be kubectl';
+  }
   const exposedKubectlPath = getExecutableInPath(config.codexChildPath, 'kubectl');
   if (exposedKubectlPath) {
     return `CODEX_CHILD_PATH exposes kubectl: ${exposedKubectlPath}`;
+  }
+  const readonlyKubectlPath = getExecutableInPath(
+    config.codexChildPath,
+    config.readonlyKubectlCommand
+  );
+  if (!readonlyKubectlPath) {
+    return `CODEX_CHILD_PATH does not expose ${config.readonlyKubectlCommand}`;
   }
   if (!config.codexHome) {
     return 'CODEX_HOME is required';

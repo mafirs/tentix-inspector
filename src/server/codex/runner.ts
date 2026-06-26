@@ -153,7 +153,7 @@ async function runCodexChild(args: {
 }): Promise<ChildResult> {
   const { runId, input, config, kubeconfigPath, runWorkdir } = args;
   const eventSummary = createEmptyEventSummary();
-  const childEnv = buildCodexProcessEnv(config, kubeconfigPath);
+  const childEnv = buildCodexProcessEnv(config, kubeconfigPath, input.namespace);
   const codexArgs = buildCodexArgs(config, runWorkdir, childEnv);
   const codexBinary = await resolveExecutablePath(config.binary);
   const child = spawn(codexBinary, codexArgs, {
@@ -244,6 +244,7 @@ async function runCodexChild(args: {
       sandbox: config.sandbox,
       runWorkdir,
       inspectWorkdir: config.inspectWorkdir,
+      readonlyKubectlCommand: config.readonlyKubectlCommand,
     });
   });
 }
@@ -279,26 +280,34 @@ function buildCodexArgs(
 
 function buildCodexProcessEnv(
   config: CodexRunConfig,
-  kubeconfigPath: string
+  kubeconfigPath: string,
+  targetNamespace: string
 ): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = {
     PATH: config.codexChildPath,
     HOME: process.env.HOME ?? '',
     CODEX_HOME: config.codexHome,
     CODEX_INSPECT_WORKDIR: config.inspectWorkdir,
+    CODEX_READONLY_KUBECTL_COMMAND: config.readonlyKubectlCommand,
+    CODEX_TARGET_NAMESPACE: targetNamespace,
     KUBECONFIG: kubeconfigPath,
-    BYAGENT_KUBECONFIG: kubeconfigPath,
   };
 
   return childEnv;
 }
 
 function buildCodexPrompt(input: CodexInspectRequest, config: CodexRunConfig): string {
+  const readonlyKubectlCommand = config.readonlyKubectlCommand;
   return [
     `$${config.skill}`,
     '',
     '请按该 skill 的 SOP 处理下面的 Tentix 工单诊断请求。',
-    '只能使用 kubectl-ByCodex-READONLY 访问 Kubernetes；不要直接调用原生 kubectl。',
+    `Kubernetes 查询只能使用本项目命令: ${readonlyKubectlCommand}`,
+    `命令格式: ${readonlyKubectlCommand} <readonly-subcommand> ...`,
+    `只能查询当前用户 namespace: ${input.namespace}`,
+    '禁止使用 -A / --all-namespaces，禁止查询 nodes、pv、namespaces 等集群级资源。',
+    '不要调用原生 kubectl。',
+    '允许的 Kubernetes 子命令: get, describe, logs, top, exec；所有命令必须带当前 namespace。',
     `诊断资料目录: ${config.inspectWorkdir}`,
     '诊断资料目录只用于读取 Sealos 源码、知识库和操作守则；临时文件只写入当前工作目录。',
     '最终只输出给 Tentix 参考的诊断结论纯文本，不要输出 JSON，不要输出 Markdown 表格。',
@@ -538,6 +547,7 @@ function logCodexRun(args: {
     finalTextLength: args.finalTextLength,
     sandbox: args.config.sandbox,
     inspectWorkdir: args.config.inspectWorkdir,
+    readonlyKubectlCommand: args.config.readonlyKubectlCommand,
     hasKubeconfig: Boolean(args.input.requestKubeconfig),
     eventSummary: args.eventSummary,
   }));
