@@ -163,7 +163,8 @@ async function runClaudeChild(args: {
   const { runId, input, config, kubeconfigPath, runWorkdir } = args;
   const eventSummary = createEmptyEventSummary();
   const childEnv = buildClaudeProcessEnv(config, kubeconfigPath, input.namespace);
-  const claudeArgs = buildClaudeArgs(config);
+  const claudeSkillPluginDir = getClaudeSkillPluginDir(config.inspectWorkdir);
+  const claudeArgs = buildClaudeArgs(config, claudeSkillPluginDir);
   const claudeBinary = await resolveExecutablePath(config.claudeBinary);
   const childStartedAt = Date.now();
   const command = config.claudeUseBwrap
@@ -173,6 +174,7 @@ async function runClaudeChild(args: {
     ? [
         runWorkdir,
         config.inspectWorkdir,
+        claudeSkillPluginDir,
         kubeconfigPath,
         config.agentChildPath,
         claudeBinary,
@@ -288,7 +290,7 @@ async function runClaudeChild(args: {
   });
 }
 
-function buildClaudeArgs(config: AgentRunConfig): string[] {
+function buildClaudeArgs(config: AgentRunConfig, claudeSkillPluginDir: string): string[] {
   return [
     '-p',
     '--input-format',
@@ -312,9 +314,18 @@ function buildClaudeArgs(config: AgentRunConfig): string[] {
     '{"mcpServers":{}}',
     '--strict-mcp-config',
     '--bare',
+    '--plugin-dir',
+    claudeSkillPluginDir,
     '--add-dir',
     config.inspectWorkdir,
   ];
+}
+
+function getClaudeSkillPluginDir(inspectWorkdir: string): string {
+  if (path.basename(inspectWorkdir) === 'knowledge') {
+    return path.dirname(inspectWorkdir);
+  }
+  return inspectWorkdir;
 }
 
 function buildClaudeProcessEnv(

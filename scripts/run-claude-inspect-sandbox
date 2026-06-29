@@ -19,16 +19,17 @@ realpath_or_raw() {
 
 readonly HOST_HOME="${HOME:-}"
 
-if (( $# < 6 )); then
-  fail "expected: <run-workdir> <inspect-workdir> <kubeconfig-path> <agent-child-path> <claude-binary> -- <claude-args...>"
+if (( $# < 7 )); then
+  fail "expected: <run-workdir> <inspect-workdir> <skill-plugin-dir> <kubeconfig-path> <agent-child-path> <claude-binary> -- <claude-args...>"
 fi
 
 run_workdir="$1"
 inspect_workdir="$2"
-kubeconfig_path="$3"
-agent_child_path="$4"
-claude_binary="$5"
-shift 5
+skill_plugin_dir="$3"
+kubeconfig_path="$4"
+agent_child_path="$5"
+claude_binary="$6"
+shift 6
 
 if [[ "${1:-}" != "--" ]]; then
   fail "missing -- before claude args"
@@ -39,6 +40,7 @@ command -v bwrap >/dev/null 2>&1 || fail "bubblewrap is required"
 [[ -n "$HOST_HOME" ]] || fail "HOME is required"
 [[ -d "$run_workdir" ]] || fail "run workdir is not a directory"
 [[ -d "$inspect_workdir" ]] || fail "inspect workdir is not a directory"
+[[ -d "$skill_plugin_dir" ]] || fail "skill plugin dir is not a directory"
 [[ -f "$kubeconfig_path" ]] || fail "kubeconfig is not a file"
 [[ -n "$agent_child_path" ]] || fail "AGENT_CHILD_PATH is required"
 
@@ -63,7 +65,7 @@ sandbox_args=(
   --ro-bind "$claude_bind_root" "$claude_bind_root"
   --ro-bind "$tentix_codex_root" "$tentix_codex_root"
   --bind "$run_workdir" "$run_workdir"
-  --ro-bind "$inspect_workdir" "$inspect_workdir"
+  --ro-bind "$skill_plugin_dir" "$skill_plugin_dir"
   --ro-bind "$kubeconfig_path" "$kubeconfig_path"
   --ro-bind /usr /usr
   --ro-bind /bin /bin
