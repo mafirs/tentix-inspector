@@ -166,16 +166,21 @@ async function runClaudeChild(args: {
   const claudeArgs = buildClaudeArgs(config);
   const claudeBinary = await resolveExecutablePath(config.claudeBinary);
   const childStartedAt = Date.now();
-  const sandboxRunner = await resolveExecutablePath(CLAUDE_SANDBOX_RUNNER);
-  const child = spawn(sandboxRunner, [
-    runWorkdir,
-    config.inspectWorkdir,
-    kubeconfigPath,
-    config.agentChildPath,
-    claudeBinary,
-    '--',
-    ...claudeArgs,
-  ], {
+  const command = config.claudeUseBwrap
+    ? await resolveExecutablePath(CLAUDE_SANDBOX_RUNNER)
+    : claudeBinary;
+  const commandArgs = config.claudeUseBwrap
+    ? [
+        runWorkdir,
+        config.inspectWorkdir,
+        kubeconfigPath,
+        config.agentChildPath,
+        claudeBinary,
+        '--',
+        ...claudeArgs,
+      ]
+    : claudeArgs;
+  const child = spawn(command, commandArgs, {
     cwd: runWorkdir,
     env: childEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -492,6 +497,7 @@ function logClaudeRunStart(
     `  namespace: ${context.input.namespace}`,
     `  runWorkdir: ${runWorkdir}`,
     `  inspectWorkdir: ${context.config.inspectWorkdir}`,
+    `  claudeUseBwrap: ${context.config.claudeUseBwrap}`,
     `  readonlyKubectlCommand: ${context.config.readonlyKubectlCommand}`,
     `  tools: ${CLAUDE_TOOLS}`,
   ].join('\n'));
@@ -649,6 +655,7 @@ function logClaudeRun(args: {
     `  duration: ${formatDuration(Date.now() - args.startedAt)}`,
     `  finalTextLength: ${args.finalTextLength}`,
     `  inspectWorkdir: ${args.config.inspectWorkdir}`,
+    `  claudeUseBwrap: ${args.config.claudeUseBwrap}`,
     `  readonlyKubectlCommand: ${args.config.readonlyKubectlCommand}`,
     `  hasKubeconfig: ${Boolean(args.input.requestKubeconfig)}`,
     `  sessionId: ${args.eventSummary.threadId ?? ''}`,

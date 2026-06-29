@@ -385,10 +385,10 @@ curl -X POST 'http://localhost:3000/api/skills?zone=hzh&namespace=ns-example' \
   -d '{"latestMessage":"列出当前命名空间的 Pod"}'
 ```
 
-`/api/codex-inspect` 需要请求级 kubeconfig，并按 `AGENT` 选择本地执行器。通用运行参数使用 `AGENT_*`，Codex 私有参数使用 `CODEX_*`，Claude 私有参数使用 `CLAUDE_*`。使用 `AGENT=claude` 时，运行环境还必须安装 `bubblewrap`，因为 Claude 会通过 `scripts/run-claude-inspect-sandbox` 进入外层进程沙箱：
+`/api/codex-inspect` 需要请求级 kubeconfig，并按 `AGENT` 选择本地执行器。通用运行参数使用 `AGENT_*`，Codex 私有参数使用 `CODEX_*`，Claude 私有参数使用 `CLAUDE_*`。使用 `AGENT=claude` 时，默认还必须安装 `bubblewrap`，因为 Claude 会通过 `scripts/run-claude-inspect-sandbox` 进入外层进程沙箱；若当前运行环境不支持 bubblewrap，可临时设置 `CLAUDE_USE_BWRAP=false` 直接启动 Claude CLI，以便先打通流程：
 
 ```bash
-AGENT=claude npm run dev:http
+AGENT=claude CLAUDE_USE_BWRAP=false npm run dev:http
 
 curl -X POST 'http://localhost:3000/api/codex-inspect?zone=hzh&namespace=ns-example' \
   -H 'content-type: application/json' \

@@ -5,6 +5,7 @@ import { AgentRunConfig, CodexSandbox } from './types';
 
 const DEFAULT_CODEX_BIN = 'codex';
 const DEFAULT_CLAUDE_BIN = 'claude';
+const DEFAULT_CLAUDE_USE_BWRAP = true;
 const DEFAULT_CODEX_SANDBOX: CodexSandbox = 'workspace-write';
 const DEFAULT_AGENT_CHILD_BIN_DIR = path.join(os.homedir(), '.local', 'share', 'tentix-codex', 'bin');
 const DEFAULT_AGENT_CHILD_PATH = [
@@ -25,6 +26,7 @@ export function getAgentRunConfig(): AgentRunConfig {
   return {
     codexBinary: (process.env.CODEX_BIN ?? DEFAULT_CODEX_BIN).trim() || DEFAULT_CODEX_BIN,
     claudeBinary: (process.env.CLAUDE_BIN ?? DEFAULT_CLAUDE_BIN).trim() || DEFAULT_CLAUDE_BIN,
+    claudeUseBwrap: getBooleanEnv('CLAUDE_USE_BWRAP', DEFAULT_CLAUDE_USE_BWRAP),
     agentChildPath: (process.env.AGENT_CHILD_PATH ?? DEFAULT_AGENT_CHILD_PATH).trim(),
     readonlyKubectlCommand: (
       process.env.AGENT_READONLY_KUBECTL_COMMAND ?? DEFAULT_AGENT_READONLY_KUBECTL_COMMAND

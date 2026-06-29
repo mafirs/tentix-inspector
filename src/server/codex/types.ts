@@ -30,6 +30,7 @@ export interface CodexInspectRequest {
 export interface AgentRunConfig {
   codexBinary: string;
   claudeBinary: string;
+  claudeUseBwrap: boolean;
   agentChildPath: string;
   readonlyKubectlCommand: string;
   inspectWorkdir: string;
