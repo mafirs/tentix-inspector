@@ -1,9 +1,11 @@
-import { timingSafeEqual } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import express, { NextFunction, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as k8s from '@kubernetes/client-node';
 import { z } from 'zod';
-import { runCodexInspection, CodexInspectRequest } from './codex/runner';
+import { runCodexInspection } from './codex/runner';
+import { runClaudeInspection } from './claude/runner';
+import { CodexInspectRequest, CodexInspectResult } from './codex/types';
 import { getAgentRunnable, AgentState, SUPPORTED_ZONES, ZONE_KUBECONFIG_MAP } from './agent/graph';
 
 const app = express();
@@ -330,6 +332,40 @@ function sendCodexPlainText(res: Response, text: string): void {
   res.status(200).type('text/plain; charset=utf-8').send(text);
 }
 
+type InspectionAgent = 'codex' | 'claude';
+
+function getConfiguredInspectionAgent(): InspectionAgent | null {
+  const rawAgent = (process.env.AGENT ?? 'codex').trim().toLowerCase();
+  if (!rawAgent || rawAgent === 'codex') {
+    return 'codex';
+  }
+  if (rawAgent === 'claude') {
+    return 'claude';
+  }
+  return null;
+}
+
+async function runConfiguredInspection(input: CodexInspectRequest): Promise<CodexInspectResult> {
+  const agent = getConfiguredInspectionAgent();
+  if (agent === 'claude') {
+    return await runClaudeInspection(input);
+  }
+  if (agent === 'codex') {
+    return await runCodexInspection(input);
+  }
+
+  const runId = randomUUID();
+  console.error('[HTTP] invalid AGENT for /api/codex-inspect:', {
+    runId,
+    agent: process.env.AGENT ?? '',
+  });
+  return {
+    runId,
+    status: 'invalid_config',
+    text: `自动诊断服务暂不可用，未生成可用结论。runId=${runId}`,
+  };
+}
+
 app.post('/api/codex-inspect', authenticateInspectorRequest, jsonBodyParser, async (req: Request, res: Response) => {
   let runInput: CodexInspectRequest | null = null;
 
@@ -342,7 +378,7 @@ app.post('/api/codex-inspect', authenticateInspectorRequest, jsonBodyParser, asy
       try {
         requestKubeconfig = decodeRequestKubeconfig(authHeader);
       } catch {
-        const result = await runCodexInspection({
+        const result = await runConfiguredInspection({
           zone: '',
           namespace: '',
           ticketId: body.ticketId ?? '',
@@ -362,7 +398,7 @@ app.post('/api/codex-inspect', authenticateInspectorRequest, jsonBodyParser, asy
       }
 
       if (!requestKubeconfig || !isValidKubeconfig(requestKubeconfig)) {
-        const result = await runCodexInspection({
+        const result = await runConfiguredInspection({
           zone: '',
           namespace: '',
           ticketId: body.ticketId ?? '',
@@ -411,7 +447,7 @@ app.post('/api/codex-inspect', authenticateInspectorRequest, jsonBodyParser, asy
       inputError,
     };
 
-    const result = await runCodexInspection(runInput);
+    const result = await runConfiguredInspection(runInput);
     sendCodexPlainText(res, result.text);
   } catch (error) {
     console.error('[HTTP] /api/codex-inspect unexpected error:', {

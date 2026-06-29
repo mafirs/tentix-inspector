@@ -100,6 +100,9 @@ K8S_REQUEST_TIMEOUT_MS=60000
 
 # 可选，工具描述覆盖文件路径（JSON）
 TOOLS_DESC_OVERRIDE_FILE=./config/tools-override.json
+
+# 可选，默认 codex；/api/codex-inspect 可选 codex 或 claude
+AGENT=codex
 ```
 
 说明：
@@ -359,6 +362,17 @@ npm run dev:http
 
 curl -X POST 'http://localhost:3000/api/skills?zone=hzh&namespace=ns-example' \
   -H 'content-type: application/json' \
+  -d '{"latestMessage":"列出当前命名空间的 Pod"}'
+```
+
+`/api/codex-inspect` 需要请求级 kubeconfig，并按 `AGENT` 选择本地执行器。使用 `AGENT=claude` 时，运行环境还必须安装 `bubblewrap`，因为 Claude 会通过 `scripts/run-claude-inspect-sandbox` 进入外层进程沙箱：
+
+```bash
+AGENT=claude npm run dev:http
+
+curl -X POST 'http://localhost:3000/api/codex-inspect?zone=hzh&namespace=ns-example' \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer <url-encoded-kubeconfig>' \
   -d '{"latestMessage":"列出当前命名空间的 Pod"}'
 ```
 

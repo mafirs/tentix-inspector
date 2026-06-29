@@ -57,6 +57,20 @@ export function getCodexRunConfig(): CodexRunConfig {
 }
 
 export function validateCodexRunConfig(config: CodexRunConfig): string {
+  const sharedConfigError = validateSharedAgentRunConfig(config);
+  if (sharedConfigError) {
+    return sharedConfigError;
+  }
+  if (!config.codexHome) {
+    return 'CODEX_HOME is required';
+  }
+  if (!fs.existsSync(config.codexHome) || !fs.statSync(config.codexHome).isDirectory()) {
+    return `CODEX_HOME is not a directory: ${config.codexHome}`;
+  }
+  return '';
+}
+
+export function validateSharedAgentRunConfig(config: CodexRunConfig): string {
   if (!config.inspectWorkdir) {
     return 'CODEX_INSPECT_WORKDIR is required';
   }
@@ -89,12 +103,6 @@ export function validateCodexRunConfig(config: CodexRunConfig): string {
   );
   if (!readonlyKubectlPath) {
     return `CODEX_CHILD_PATH does not expose ${config.readonlyKubectlCommand}`;
-  }
-  if (!config.codexHome) {
-    return 'CODEX_HOME is required';
-  }
-  if (!fs.existsSync(config.codexHome) || !fs.statSync(config.codexHome).isDirectory()) {
-    return `CODEX_HOME is not a directory: ${config.codexHome}`;
   }
   if (!config.skill) {
     return 'CODEX_INSPECT_SKILL is required';
