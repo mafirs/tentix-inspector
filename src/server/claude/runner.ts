@@ -309,7 +309,7 @@ function buildClaudeArgs(config: AgentRunConfig): string[] {
     '--disallowedTools',
     CLAUDE_DISALLOWED_TOOLS,
     '--mcp-config',
-    '{}',
+    '{"mcpServers":{}}',
     '--strict-mcp-config',
     '--bare',
     '--add-dir',
