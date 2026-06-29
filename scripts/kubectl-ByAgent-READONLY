@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly WRAPPER_NAME="kubectl-ByCodex-READONLY"
+readonly WRAPPER_NAME="kubectl-ByAgent-READONLY"
 readonly REAL_KUBECTL_PATH="${HOME}/.local/share/tentix-codex/internal/kubectl"
 
 deny() {
