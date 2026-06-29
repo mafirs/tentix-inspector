@@ -27,15 +27,16 @@ export interface CodexInspectRequest {
   inputError?: string;
 }
 
-export interface CodexRunConfig {
-  binary: string;
-  codexChildPath: string;
+export interface AgentRunConfig {
+  codexBinary: string;
+  claudeBinary: string;
+  agentChildPath: string;
   readonlyKubectlCommand: string;
   inspectWorkdir: string;
   codexHome: string;
   skill: string;
-  sandbox: CodexSandbox;
-  workspaceNetworkAccess: boolean;
+  codexSandbox: CodexSandbox;
+  codexWorkspaceNetworkAccess: boolean;
   timeoutMs: number;
   maxConcurrentRuns: number;
   maxPendingRuns: number;

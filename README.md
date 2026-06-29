@@ -103,6 +103,26 @@ TOOLS_DESC_OVERRIDE_FILE=./config/tools-override.json
 
 # 可选，默认 codex；/api/codex-inspect 可选 codex 或 claude
 AGENT=codex
+
+# /api/codex-inspect 通用配置
+AGENT_INSPECT_WORKDIR=/home/devbox/.codex/skills/tentix-Sealos-ticket/knowledge
+AGENT_INSPECT_SKILL=tentix-sealos-ticket
+AGENT_CHILD_PATH=/home/devbox/.local/share/tentix-codex/bin:/usr/local/bin:/usr/bin:/bin
+AGENT_READONLY_KUBECTL_COMMAND=kubectl-ByCodex-READONLY
+AGENT_RUN_TIMEOUT_MS=600000
+AGENT_MAX_CONCURRENT_RUNS=1
+AGENT_MAX_PENDING_RUNS=4
+AGENT_PENDING_TIMEOUT_MS=30000
+AGENT_OUTPUT_TRUNCATE_CHARS=1000
+
+# Codex 私有配置
+CODEX_BIN=codex
+CODEX_HOME=/home/devbox/.codex
+CODEX_SANDBOX=workspace-write
+CODEX_WORKSPACE_NETWORK_ACCESS=true
+
+# Claude 私有配置
+CLAUDE_BIN=claude
 ```
 
 说明：
@@ -365,7 +385,7 @@ curl -X POST 'http://localhost:3000/api/skills?zone=hzh&namespace=ns-example' \
   -d '{"latestMessage":"列出当前命名空间的 Pod"}'
 ```
 
-`/api/codex-inspect` 需要请求级 kubeconfig，并按 `AGENT` 选择本地执行器。使用 `AGENT=claude` 时，运行环境还必须安装 `bubblewrap`，因为 Claude 会通过 `scripts/run-claude-inspect-sandbox` 进入外层进程沙箱：
+`/api/codex-inspect` 需要请求级 kubeconfig，并按 `AGENT` 选择本地执行器。通用运行参数使用 `AGENT_*`，Codex 私有参数使用 `CODEX_*`，Claude 私有参数使用 `CLAUDE_*`。使用 `AGENT=claude` 时，运行环境还必须安装 `bubblewrap`，因为 Claude 会通过 `scripts/run-claude-inspect-sandbox` 进入外层进程沙箱：
 
 ```bash
 AGENT=claude npm run dev:http

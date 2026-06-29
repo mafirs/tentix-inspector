@@ -20,13 +20,13 @@ realpath_or_raw() {
 readonly HOST_HOME="${HOME:-}"
 
 if (( $# < 6 )); then
-  fail "expected: <run-workdir> <inspect-workdir> <kubeconfig-path> <codex-child-path> <claude-binary> -- <claude-args...>"
+  fail "expected: <run-workdir> <inspect-workdir> <kubeconfig-path> <agent-child-path> <claude-binary> -- <claude-args...>"
 fi
 
 run_workdir="$1"
 inspect_workdir="$2"
 kubeconfig_path="$3"
-codex_child_path="$4"
+agent_child_path="$4"
 claude_binary="$5"
 shift 5
 
@@ -40,7 +40,7 @@ command -v bwrap >/dev/null 2>&1 || fail "bubblewrap is required"
 [[ -d "$run_workdir" ]] || fail "run workdir is not a directory"
 [[ -d "$inspect_workdir" ]] || fail "inspect workdir is not a directory"
 [[ -f "$kubeconfig_path" ]] || fail "kubeconfig is not a file"
-[[ -n "$codex_child_path" ]] || fail "CODEX_CHILD_PATH is required"
+[[ -n "$agent_child_path" ]] || fail "AGENT_CHILD_PATH is required"
 
 claude_path="$(command -v "$claude_binary" || true)"
 [[ -n "$claude_path" && -x "$claude_path" ]] || fail "claude binary is not executable"
@@ -80,7 +80,7 @@ sandbox_args=(
   --chdir "$run_workdir"
 )
 
-IFS=':' read -r -a child_path_entries <<< "$codex_child_path"
+IFS=':' read -r -a child_path_entries <<< "$agent_child_path"
 for path_entry in "${child_path_entries[@]}"; do
   [[ -n "$path_entry" && -d "$path_entry" ]] || continue
   case "$path_entry" in

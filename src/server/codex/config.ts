@@ -1,65 +1,67 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { CodexRunConfig, CodexSandbox } from './types';
+import { AgentRunConfig, CodexSandbox } from './types';
 
 const DEFAULT_CODEX_BIN = 'codex';
+const DEFAULT_CLAUDE_BIN = 'claude';
 const DEFAULT_CODEX_SANDBOX: CodexSandbox = 'workspace-write';
-const DEFAULT_CODEX_CHILD_BIN_DIR = path.join(os.homedir(), '.local', 'share', 'tentix-codex', 'bin');
-const DEFAULT_CODEX_CHILD_PATH = [
-  DEFAULT_CODEX_CHILD_BIN_DIR,
+const DEFAULT_AGENT_CHILD_BIN_DIR = path.join(os.homedir(), '.local', 'share', 'tentix-codex', 'bin');
+const DEFAULT_AGENT_CHILD_PATH = [
+  DEFAULT_AGENT_CHILD_BIN_DIR,
   '/usr/local/bin',
   '/usr/bin',
   '/bin',
 ].join(path.delimiter);
-const DEFAULT_CODEX_READONLY_KUBECTL_COMMAND = 'kubectl-ByCodex-READONLY';
+const DEFAULT_AGENT_READONLY_KUBECTL_COMMAND = 'kubectl-ByCodex-READONLY';
 const DEFAULT_CODEX_WORKSPACE_NETWORK_ACCESS = true;
-const DEFAULT_CODEX_RUN_TIMEOUT_MS = 600_000;
-const DEFAULT_CODEX_MAX_CONCURRENT_RUNS = 1;
-const DEFAULT_CODEX_MAX_PENDING_RUNS = 4;
-const DEFAULT_CODEX_PENDING_TIMEOUT_MS = 30_000;
-const DEFAULT_CODEX_OUTPUT_TRUNCATE_CHARS = 1_000;
+const DEFAULT_AGENT_RUN_TIMEOUT_MS = 600_000;
+const DEFAULT_AGENT_MAX_CONCURRENT_RUNS = 1;
+const DEFAULT_AGENT_MAX_PENDING_RUNS = 4;
+const DEFAULT_AGENT_PENDING_TIMEOUT_MS = 30_000;
+const DEFAULT_AGENT_OUTPUT_TRUNCATE_CHARS = 1_000;
 
-export function getCodexRunConfig(): CodexRunConfig {
+export function getAgentRunConfig(): AgentRunConfig {
   return {
-    binary: (process.env.CODEX_BIN ?? DEFAULT_CODEX_BIN).trim() || DEFAULT_CODEX_BIN,
-    codexChildPath: (process.env.CODEX_CHILD_PATH ?? DEFAULT_CODEX_CHILD_PATH).trim(),
+    codexBinary: (process.env.CODEX_BIN ?? DEFAULT_CODEX_BIN).trim() || DEFAULT_CODEX_BIN,
+    claudeBinary: (process.env.CLAUDE_BIN ?? DEFAULT_CLAUDE_BIN).trim() || DEFAULT_CLAUDE_BIN,
+    agentChildPath: (process.env.AGENT_CHILD_PATH ?? DEFAULT_AGENT_CHILD_PATH).trim(),
     readonlyKubectlCommand: (
-      process.env.CODEX_READONLY_KUBECTL_COMMAND ?? DEFAULT_CODEX_READONLY_KUBECTL_COMMAND
+      process.env.AGENT_READONLY_KUBECTL_COMMAND ?? DEFAULT_AGENT_READONLY_KUBECTL_COMMAND
     ).trim(),
-    inspectWorkdir: (process.env.CODEX_INSPECT_WORKDIR ?? '').trim(),
+    inspectWorkdir: (process.env.AGENT_INSPECT_WORKDIR ?? '').trim(),
     codexHome: (process.env.CODEX_HOME ?? '').trim(),
-    skill: (process.env.CODEX_INSPECT_SKILL ?? '').trim(),
-    sandbox: getCodexSandbox(),
-    workspaceNetworkAccess: getBooleanEnv(
+    skill: (process.env.AGENT_INSPECT_SKILL ?? '').trim(),
+    codexSandbox: getCodexSandbox(),
+    codexWorkspaceNetworkAccess: getBooleanEnv(
       'CODEX_WORKSPACE_NETWORK_ACCESS',
       DEFAULT_CODEX_WORKSPACE_NETWORK_ACCESS
     ),
-    timeoutMs: getPositiveIntegerEnv('CODEX_RUN_TIMEOUT_MS', DEFAULT_CODEX_RUN_TIMEOUT_MS),
+    timeoutMs: getPositiveIntegerEnv('AGENT_RUN_TIMEOUT_MS', DEFAULT_AGENT_RUN_TIMEOUT_MS),
     maxConcurrentRuns: getPositiveIntegerEnv(
-      'CODEX_MAX_CONCURRENT_RUNS',
-      DEFAULT_CODEX_MAX_CONCURRENT_RUNS
+      'AGENT_MAX_CONCURRENT_RUNS',
+      DEFAULT_AGENT_MAX_CONCURRENT_RUNS
     ),
     maxPendingRuns: getNonNegativeIntegerEnv(
-      'CODEX_MAX_PENDING_RUNS',
-      DEFAULT_CODEX_MAX_PENDING_RUNS
+      'AGENT_MAX_PENDING_RUNS',
+      DEFAULT_AGENT_MAX_PENDING_RUNS
     ),
     pendingTimeoutMs: getPositiveIntegerEnv(
-      'CODEX_PENDING_TIMEOUT_MS',
-      DEFAULT_CODEX_PENDING_TIMEOUT_MS
+      'AGENT_PENDING_TIMEOUT_MS',
+      DEFAULT_AGENT_PENDING_TIMEOUT_MS
     ),
     outputTruncateChars: getPositiveIntegerEnv(
-      'CODEX_OUTPUT_TRUNCATE_CHARS',
-      DEFAULT_CODEX_OUTPUT_TRUNCATE_CHARS
+      'AGENT_OUTPUT_TRUNCATE_CHARS',
+      DEFAULT_AGENT_OUTPUT_TRUNCATE_CHARS
     ),
-    tempRoot: path.join(os.tmpdir(), 'tentix-codex-runs'),
+    tempRoot: path.join(os.tmpdir(), 'tentix-agent-runs'),
   };
 }
 
-export function validateCodexRunConfig(config: CodexRunConfig): string {
-  const sharedConfigError = validateSharedAgentRunConfig(config);
-  if (sharedConfigError) {
-    return sharedConfigError;
+export function validateCodexRunConfig(config: AgentRunConfig): string {
+  const agentConfigError = validateAgentRunConfig(config);
+  if (agentConfigError) {
+    return agentConfigError;
   }
   if (!config.codexHome) {
     return 'CODEX_HOME is required';
@@ -70,42 +72,42 @@ export function validateCodexRunConfig(config: CodexRunConfig): string {
   return '';
 }
 
-export function validateSharedAgentRunConfig(config: CodexRunConfig): string {
+export function validateAgentRunConfig(config: AgentRunConfig): string {
   if (!config.inspectWorkdir) {
-    return 'CODEX_INSPECT_WORKDIR is required';
+    return 'AGENT_INSPECT_WORKDIR is required';
   }
   if (!fs.existsSync(config.inspectWorkdir) || !fs.statSync(config.inspectWorkdir).isDirectory()) {
-    return `CODEX_INSPECT_WORKDIR is not a directory: ${config.inspectWorkdir}`;
+    return `AGENT_INSPECT_WORKDIR is not a directory: ${config.inspectWorkdir}`;
   }
-  if (!config.codexChildPath) {
-    return 'CODEX_CHILD_PATH is required';
+  if (!config.agentChildPath) {
+    return 'AGENT_CHILD_PATH is required';
   }
-  const invalidCodexChildPathEntry = getInvalidPathDirectory(config.codexChildPath);
-  if (invalidCodexChildPathEntry) {
-    return `CODEX_CHILD_PATH contains a non-directory entry: ${invalidCodexChildPathEntry}`;
+  const invalidAgentChildPathEntry = getInvalidPathDirectory(config.agentChildPath);
+  if (invalidAgentChildPathEntry) {
+    return `AGENT_CHILD_PATH contains a non-directory entry: ${invalidAgentChildPathEntry}`;
   }
   if (!config.readonlyKubectlCommand) {
-    return 'CODEX_READONLY_KUBECTL_COMMAND is required';
+    return 'AGENT_READONLY_KUBECTL_COMMAND is required';
   }
   if (!/^[A-Za-z0-9._-]+$/.test(config.readonlyKubectlCommand)) {
-    return `CODEX_READONLY_KUBECTL_COMMAND is unsafe: ${config.readonlyKubectlCommand}`;
+    return `AGENT_READONLY_KUBECTL_COMMAND is unsafe: ${config.readonlyKubectlCommand}`;
   }
   if (config.readonlyKubectlCommand === 'kubectl') {
-    return 'CODEX_READONLY_KUBECTL_COMMAND must not be kubectl';
+    return 'AGENT_READONLY_KUBECTL_COMMAND must not be kubectl';
   }
-  const exposedKubectlPath = getExecutableInPath(config.codexChildPath, 'kubectl');
+  const exposedKubectlPath = getExecutableInPath(config.agentChildPath, 'kubectl');
   if (exposedKubectlPath) {
-    return `CODEX_CHILD_PATH exposes kubectl: ${exposedKubectlPath}`;
+    return `AGENT_CHILD_PATH exposes kubectl: ${exposedKubectlPath}`;
   }
   const readonlyKubectlPath = getExecutableInPath(
-    config.codexChildPath,
+    config.agentChildPath,
     config.readonlyKubectlCommand
   );
   if (!readonlyKubectlPath) {
-    return `CODEX_CHILD_PATH does not expose ${config.readonlyKubectlCommand}`;
+    return `AGENT_CHILD_PATH does not expose ${config.readonlyKubectlCommand}`;
   }
   if (!config.skill) {
-    return 'CODEX_INSPECT_SKILL is required';
+    return 'AGENT_INSPECT_SKILL is required';
   }
   return '';
 }

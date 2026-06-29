@@ -3,16 +3,15 @@ import { constants as fsConstants } from 'fs';
 import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { getCodexRunConfig, validateSharedAgentRunConfig } from '../codex/config';
+import { getAgentRunConfig, validateAgentRunConfig } from '../codex/config';
 import {
+  AgentRunConfig,
   CodexEventSummary,
   CodexInspectRequest,
   CodexInspectResult,
-  CodexRunConfig,
   CodexRunStatus,
 } from '../codex/types';
 
-const CLAUDE_BINARY = 'claude';
 const CLAUDE_SANDBOX_RUNNER = path.resolve(__dirname, '../../../scripts/run-claude-inspect-sandbox');
 const CLAUDE_TOOLS = 'Bash,Read,Grep,Glob';
 const CLAUDE_DISALLOWED_TOOLS = 'Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch';
@@ -26,7 +25,7 @@ type PendingRun = {
 type ClaudeLiveLogContext = {
   runId: string;
   input: CodexInspectRequest;
-  config: CodexRunConfig;
+  config: AgentRunConfig;
   startedAt: number;
 };
 
@@ -44,7 +43,7 @@ const pendingClaudeRuns: PendingRun[] = [];
 export async function runClaudeInspection(input: CodexInspectRequest): Promise<CodexInspectResult> {
   const runId = randomUUID();
   const startedAt = Date.now();
-  const config = getCodexRunConfig();
+  const config = getAgentRunConfig();
   const eventSummary = createEmptyEventSummary();
 
   if (input.inputError) {
@@ -71,7 +70,7 @@ export async function runClaudeInspection(input: CodexInspectRequest): Promise<C
     });
   }
 
-  const configError = validateSharedAgentRunConfig(config);
+  const configError = validateAgentRunConfig(config);
   if (configError) {
     return finishWithoutSpawn({
       runId,
@@ -157,7 +156,7 @@ export async function runClaudeInspection(input: CodexInspectRequest): Promise<C
 async function runClaudeChild(args: {
   runId: string;
   input: CodexInspectRequest;
-  config: CodexRunConfig;
+  config: AgentRunConfig;
   kubeconfigPath: string;
   runWorkdir: string;
 }): Promise<ChildResult> {
@@ -165,14 +164,14 @@ async function runClaudeChild(args: {
   const eventSummary = createEmptyEventSummary();
   const childEnv = buildClaudeProcessEnv(config, kubeconfigPath, input.namespace);
   const claudeArgs = buildClaudeArgs(config);
-  const claudeBinary = await resolveExecutablePath(CLAUDE_BINARY);
+  const claudeBinary = await resolveExecutablePath(config.claudeBinary);
   const childStartedAt = Date.now();
   const sandboxRunner = await resolveExecutablePath(CLAUDE_SANDBOX_RUNNER);
   const child = spawn(sandboxRunner, [
     runWorkdir,
     config.inspectWorkdir,
     kubeconfigPath,
-    config.codexChildPath,
+    config.agentChildPath,
     claudeBinary,
     '--',
     ...claudeArgs,
@@ -284,7 +283,7 @@ async function runClaudeChild(args: {
   });
 }
 
-function buildClaudeArgs(config: CodexRunConfig): string[] {
+function buildClaudeArgs(config: AgentRunConfig): string[] {
   return [
     '-p',
     '--input-format',
@@ -314,23 +313,23 @@ function buildClaudeArgs(config: CodexRunConfig): string[] {
 }
 
 function buildClaudeProcessEnv(
-  config: CodexRunConfig,
+  config: AgentRunConfig,
   kubeconfigPath: string,
   targetNamespace: string
 ): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = {
-    PATH: config.codexChildPath,
+    PATH: config.agentChildPath,
     HOME: process.env.HOME ?? '',
-    CODEX_INSPECT_WORKDIR: config.inspectWorkdir,
-    CODEX_READONLY_KUBECTL_COMMAND: config.readonlyKubectlCommand,
-    CODEX_TARGET_NAMESPACE: targetNamespace,
+    AGENT_INSPECT_WORKDIR: config.inspectWorkdir,
+    AGENT_READONLY_KUBECTL_COMMAND: config.readonlyKubectlCommand,
+    AGENT_TARGET_NAMESPACE: targetNamespace,
     KUBECONFIG: kubeconfigPath,
   };
 
   return childEnv;
 }
 
-function buildClaudePrompt(input: CodexInspectRequest, config: CodexRunConfig): string {
+function buildClaudePrompt(input: CodexInspectRequest, config: AgentRunConfig): string {
   const readonlyKubectlCommand = config.readonlyKubectlCommand;
   return [
     `/${config.skill}`,
@@ -549,7 +548,7 @@ function getStatusFromChildResult(result: ChildResult): CodexRunStatus {
   return 'success';
 }
 
-async function acquireClaudeSlot(config: CodexRunConfig): Promise<SlotRelease | null> {
+async function acquireClaudeSlot(config: AgentRunConfig): Promise<SlotRelease | null> {
   if (activeClaudeRuns < config.maxConcurrentRuns) {
     activeClaudeRuns += 1;
     return createClaudeSlotRelease();
@@ -595,7 +594,7 @@ function createClaudeSlotRelease(): SlotRelease {
 function finishWithoutSpawn(args: {
   runId: string;
   input: CodexInspectRequest;
-  config: CodexRunConfig;
+  config: AgentRunConfig;
   startedAt: number;
   status: CodexRunStatus;
   reason: string;
@@ -630,7 +629,7 @@ function getFallbackText(status: CodexRunStatus, runId: string): string {
 function logClaudeRun(args: {
   runId: string;
   input: CodexInspectRequest;
-  config: CodexRunConfig;
+  config: AgentRunConfig;
   startedAt: number;
   status: CodexRunStatus;
   reason: string;

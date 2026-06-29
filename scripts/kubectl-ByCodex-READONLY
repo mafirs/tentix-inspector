@@ -95,7 +95,7 @@ validate_namespace_value() {
 
   validate_name_value "namespace" "$value"
 
-  if [[ -n "${CODEX_TARGET_NAMESPACE:-}" && "$value" != "$CODEX_TARGET_NAMESPACE" ]]; then
+  if [[ -n "${AGENT_TARGET_NAMESPACE:-}" && "$value" != "$AGENT_TARGET_NAMESPACE" ]]; then
     deny "namespace must match request namespace"
   fi
 }

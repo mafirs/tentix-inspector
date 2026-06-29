@@ -3,12 +3,12 @@ import { constants as fsConstants } from 'fs';
 import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { getCodexRunConfig, validateCodexRunConfig } from './config';
+import { getAgentRunConfig, validateCodexRunConfig } from './config';
 import {
+  AgentRunConfig,
   CodexEventSummary,
   CodexInspectRequest,
   CodexInspectResult,
-  CodexRunConfig,
   CodexRunStatus,
 } from './types';
 
@@ -23,7 +23,7 @@ type PendingRun = {
 type CodexLiveLogContext = {
   runId: string;
   input: CodexInspectRequest;
-  config: CodexRunConfig;
+  config: AgentRunConfig;
   startedAt: number;
   itemStarts: Map<string, number>;
 };
@@ -42,7 +42,7 @@ const pendingCodexRuns: PendingRun[] = [];
 export async function runCodexInspection(input: CodexInspectRequest): Promise<CodexInspectResult> {
   const runId = randomUUID();
   const startedAt = Date.now();
-  const config = getCodexRunConfig();
+  const config = getAgentRunConfig();
   const eventSummary = createEmptyEventSummary();
 
   if (input.inputError) {
@@ -155,7 +155,7 @@ export async function runCodexInspection(input: CodexInspectRequest): Promise<Co
 async function runCodexChild(args: {
   runId: string;
   input: CodexInspectRequest;
-  config: CodexRunConfig;
+  config: AgentRunConfig;
   kubeconfigPath: string;
   runWorkdir: string;
 }): Promise<ChildResult> {
@@ -163,7 +163,7 @@ async function runCodexChild(args: {
   const eventSummary = createEmptyEventSummary();
   const childEnv = buildCodexProcessEnv(config, kubeconfigPath, input.namespace);
   const codexArgs = buildCodexArgs(config, runWorkdir, childEnv);
-  const codexBinary = await resolveExecutablePath(config.binary);
+  const codexBinary = await resolveExecutablePath(config.codexBinary);
   const childStartedAt = Date.now();
   const child = spawn(codexBinary, codexArgs, {
     cwd: runWorkdir,
@@ -275,7 +275,7 @@ async function runCodexChild(args: {
 }
 
 function buildCodexArgs(
-  config: CodexRunConfig,
+  config: AgentRunConfig,
   runWorkdir: string,
   childEnv: NodeJS.ProcessEnv
 ): string[] {
@@ -283,7 +283,7 @@ function buildCodexArgs(
     'exec',
     '--json',
     '--sandbox',
-    config.sandbox,
+    config.codexSandbox,
     '-c',
     'approval_policy="never"',
     '-c',
@@ -295,8 +295,8 @@ function buildCodexArgs(
     runWorkdir,
   ];
 
-  if (config.sandbox === 'workspace-write') {
-    args.push('-c', `sandbox_workspace_write.network_access=${String(config.workspaceNetworkAccess)}`);
+  if (config.codexSandbox === 'workspace-write') {
+    args.push('-c', `sandbox_workspace_write.network_access=${String(config.codexWorkspaceNetworkAccess)}`);
   }
 
   args.push('-');
@@ -304,24 +304,24 @@ function buildCodexArgs(
 }
 
 function buildCodexProcessEnv(
-  config: CodexRunConfig,
+  config: AgentRunConfig,
   kubeconfigPath: string,
   targetNamespace: string
 ): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = {
-    PATH: config.codexChildPath,
+    PATH: config.agentChildPath,
     HOME: process.env.HOME ?? '',
     CODEX_HOME: config.codexHome,
-    CODEX_INSPECT_WORKDIR: config.inspectWorkdir,
-    CODEX_READONLY_KUBECTL_COMMAND: config.readonlyKubectlCommand,
-    CODEX_TARGET_NAMESPACE: targetNamespace,
+    AGENT_INSPECT_WORKDIR: config.inspectWorkdir,
+    AGENT_READONLY_KUBECTL_COMMAND: config.readonlyKubectlCommand,
+    AGENT_TARGET_NAMESPACE: targetNamespace,
     KUBECONFIG: kubeconfigPath,
   };
 
   return childEnv;
 }
 
-function buildCodexPrompt(input: CodexInspectRequest, config: CodexRunConfig): string {
+function buildCodexPrompt(input: CodexInspectRequest, config: AgentRunConfig): string {
   const readonlyKubectlCommand = config.readonlyKubectlCommand;
   return [
     `$${config.skill}`,
@@ -469,7 +469,7 @@ function logCodexRunStart(
     `  ticketId: ${context.input.ticketId}`,
     `  zone: ${context.input.zone}`,
     `  namespace: ${context.input.namespace}`,
-    `  sandbox: ${context.config.sandbox}`,
+    `  sandbox: ${context.config.codexSandbox}`,
     `  runWorkdir: ${runWorkdir}`,
     `  inspectWorkdir: ${context.config.inspectWorkdir}`,
     `  readonlyKubectlCommand: ${context.config.readonlyKubectlCommand}`,
@@ -673,7 +673,7 @@ function getStatusFromChildResult(result: ChildResult): CodexRunStatus {
   return 'success';
 }
 
-async function acquireCodexSlot(config: CodexRunConfig): Promise<SlotRelease | null> {
+async function acquireCodexSlot(config: AgentRunConfig): Promise<SlotRelease | null> {
   if (activeCodexRuns < config.maxConcurrentRuns) {
     activeCodexRuns += 1;
     return createCodexSlotRelease();
@@ -719,7 +719,7 @@ function createCodexSlotRelease(): SlotRelease {
 function finishWithoutSpawn(args: {
   runId: string;
   input: CodexInspectRequest;
-  config: CodexRunConfig;
+  config: AgentRunConfig;
   startedAt: number;
   status: CodexRunStatus;
   reason: string;
@@ -754,7 +754,7 @@ function getFallbackText(status: CodexRunStatus, runId: string): string {
 function logCodexRun(args: {
   runId: string;
   input: CodexInspectRequest;
-  config: CodexRunConfig;
+  config: AgentRunConfig;
   startedAt: number;
   status: CodexRunStatus;
   reason: string;
@@ -773,7 +773,7 @@ function logCodexRun(args: {
     `  signal: ${args.signal ?? 'null'}`,
     `  duration: ${formatDuration(Date.now() - args.startedAt)}`,
     `  finalTextLength: ${args.finalTextLength}`,
-    `  sandbox: ${args.config.sandbox}`,
+    `  sandbox: ${args.config.codexSandbox}`,
     `  inspectWorkdir: ${args.config.inspectWorkdir}`,
     `  readonlyKubectlCommand: ${args.config.readonlyKubectlCommand}`,
     `  hasKubeconfig: ${Boolean(args.input.requestKubeconfig)}`,
