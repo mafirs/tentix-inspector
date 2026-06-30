@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'crypto';
 import express, { NextFunction, Request, Response } from 'express';
 import * as fs from 'fs';
+import type { Server } from 'http';
 import * as k8s from '@kubernetes/client-node';
 import { z } from 'zod';
 import { runCodexInspection } from './codex/runner';
@@ -10,6 +11,12 @@ import { getAgentRunnable, AgentState, SUPPORTED_ZONES, ZONE_KUBECONFIG_MAP } fr
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const CODEX_HOME = process.env.CODEX_HOME ?? '';
+const AGENT_INSPECT_SKILL = process.env.AGENT_INSPECT_SKILL ?? '';
+const CODEX_SKILL_ROOT = process.env.CODEX_SKILL_ROOT ?? '';
+const AIPROXY_BRIDGE_ENABLED = (process.env.AIPROXY_BRIDGE_ENABLED ?? 'true').trim().toLowerCase() !== 'false';
+const AIPROXY_BRIDGE_HOST = process.env.AIPROXY_BRIDGE_HOST ?? '127.0.0.1';
+const AIPROXY_BRIDGE_PORT = process.env.AIPROXY_BRIDGE_PORT ?? '18087';
 const INSPECTOR_API_KEY_HEADER = 'x-tentix-inspector-key';
 const DEFAULT_JSON_BODY_LIMIT = '256kb';
 const JSON_BODY_LIMIT = getJsonBodyLimit();
@@ -366,6 +373,18 @@ async function runConfiguredInspection(input: CodexInspectRequest): Promise<Code
   };
 }
 
+app.get('/healthz', (_req: Request, res: Response) => {
+  res.status(200).json({ ok: true });
+});
+
+app.get('/readyz', async (_req: Request, res: Response) => {
+  const errors = await getReadinessErrors();
+  if (errors.length > 0) {
+    return res.status(503).json({ ok: false, errors });
+  }
+  return res.status(200).json({ ok: true });
+});
+
 app.post('/api/codex-inspect', authenticateInspectorRequest, jsonBodyParser, async (req: Request, res: Response) => {
   let runInput: CodexInspectRequest | null = null;
 
@@ -556,16 +575,83 @@ app.post('/api/skills', authenticateInspectorRequest, jsonBodyParser, async (req
 
 app.use(handleJsonParseError);
 
-async function startServer() {
+async function startServer(): Promise<Server> {
   console.error('[HTTP Server] Initializing /api/skills only...');
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.error(`[HTTP Server] Server is running on http://localhost:${PORT}`);
     console.error(`[HTTP Server] POST http://localhost:${PORT}/api/skills`);
     console.error(`[HTTP Server] POST http://localhost:${PORT}/api/codex-inspect`);
   });
+  return server;
 }
 
-startServer().catch((error) => {
-  console.error('[HTTP Server] Fatal error:', error);
-  process.exit(1);
-});
+startServer()
+  .then((server) => {
+    const shutdown = (signal: NodeJS.Signals) => {
+      console.error(`[HTTP Server] Received ${signal}, shutting down...`);
+      server.close((error) => {
+        if (error) {
+          console.error('[HTTP Server] Shutdown failed:', error);
+          process.exit(1);
+        }
+        process.exit(0);
+      });
+    };
+
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
+  })
+  .catch((error) => {
+    console.error('[HTTP Server] Fatal error:', error);
+    process.exit(1);
+  });
+
+async function getReadinessErrors(): Promise<string[]> {
+  const errors: string[] = [];
+  const codexHome = CODEX_HOME.trim();
+  const skillName = AGENT_INSPECT_SKILL.trim();
+  const skillRoot = CODEX_SKILL_ROOT.trim();
+
+  if (!codexHome) {
+    errors.push('CODEX_HOME is required');
+  } else {
+    if (!fs.existsSync(codexHome) || !fs.statSync(codexHome).isDirectory()) {
+      errors.push(`CODEX_HOME is not a directory: ${codexHome}`);
+    }
+    const configPath = `${codexHome}/config.toml`;
+    if (!fs.existsSync(configPath)) {
+      errors.push(`Codex config is missing: ${configPath}`);
+    }
+  }
+
+  if (!skillName) {
+    errors.push('AGENT_INSPECT_SKILL is required');
+  }
+
+  if (!skillRoot) {
+    errors.push('CODEX_SKILL_ROOT is required');
+  } else {
+    const skillPath = `${skillRoot}/SKILL.md`;
+    if (!fs.existsSync(skillPath)) {
+      errors.push(`Codex skill is missing: ${skillPath}`);
+    }
+  }
+
+  if (AIPROXY_BRIDGE_ENABLED) {
+    const bridgeReady = await isBridgeReady();
+    if (!bridgeReady) {
+      errors.push('AI proxy bridge is not ready');
+    }
+  }
+
+  return errors;
+}
+
+async function isBridgeReady(): Promise<boolean> {
+  try {
+    const response = await fetch(`http://${AIPROXY_BRIDGE_HOST}:${AIPROXY_BRIDGE_PORT}/health`);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}

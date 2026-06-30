@@ -161,8 +161,9 @@ async function runCodexChild(args: {
 }): Promise<ChildResult> {
   const { runId, input, config, kubeconfigPath, runWorkdir } = args;
   const eventSummary = createEmptyEventSummary();
-  const childEnv = buildCodexProcessEnv(config, kubeconfigPath, input.namespace);
-  const codexArgs = buildCodexArgs(config, runWorkdir, childEnv);
+  const shellEnv = buildCodexShellEnv(config, kubeconfigPath, input.namespace);
+  const childEnv = buildCodexProcessEnv(shellEnv);
+  const codexArgs = buildCodexArgs(config, runWorkdir, shellEnv);
   const codexBinary = await resolveExecutablePath(config.codexBinary);
   const childStartedAt = Date.now();
   const child = spawn(codexBinary, codexArgs, {
@@ -303,12 +304,12 @@ function buildCodexArgs(
   return args;
 }
 
-function buildCodexProcessEnv(
+function buildCodexShellEnv(
   config: AgentRunConfig,
   kubeconfigPath: string,
   targetNamespace: string
 ): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = {
+  const shellEnv: NodeJS.ProcessEnv = {
     PATH: config.agentChildPath,
     HOME: process.env.HOME ?? '',
     CODEX_HOME: config.codexHome,
@@ -318,7 +319,13 @@ function buildCodexProcessEnv(
     KUBECONFIG: kubeconfigPath,
   };
 
-  return childEnv;
+  return shellEnv;
+}
+
+function buildCodexProcessEnv(shellEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...shellEnv,
+  };
 }
 
 function buildCodexPrompt(input: CodexInspectRequest, config: AgentRunConfig): string {
