@@ -1,6 +1,10 @@
 import { randomUUID } from 'crypto';
 import { runAgentTool } from './tool-executor';
 import {
+  getInvestigationPolicyDecision,
+  getInvestigationPolicyMissingEvidence,
+} from './investigation-policy';
+import {
   AgentSessionResult,
   AgentTraceEntry,
   AgentEvidenceEntry,
@@ -39,7 +43,11 @@ export async function runAgentSession(params: RunAgentSessionParams): Promise<Ag
       return buildSessionResult('budget_exceeded', 'max_runtime', '');
     }
 
-    const decision = await params.decideNextAction({
+    const policyDecision = getInvestigationPolicyDecision({
+      ticket: params.ticket,
+      evidence,
+    });
+    const decision = policyDecision ?? await params.decideNextAction({
       ticket: params.ticket,
       budgets,
       usage,
@@ -106,6 +114,7 @@ export async function runAgentSession(params: RunAgentSessionParams): Promise<Ag
     lastTool = decision.selectedTool;
     lastToolResultSummary = output.result.summary;
     evidence.push(output.evidence);
+    appendMissingEvidence(missingEvidence, getInvestigationPolicyMissingEvidence(evidence));
     trace.push({
       turn,
       action: 'tool',
@@ -158,4 +167,14 @@ function buildUsage(
     runtimeMs: Date.now() - startedAt,
     evidenceChars: evidence.reduce((sum, item) => sum + (item.detailsPreview?.length ?? 0), 0),
   };
+}
+
+function appendMissingEvidence(target: string[], values: string[]): void {
+  for (const value of values) {
+    if (!value || target.includes(value)) {
+      continue;
+    }
+
+    target.push(value);
+  }
 }

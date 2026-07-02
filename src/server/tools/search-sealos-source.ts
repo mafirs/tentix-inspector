@@ -9,6 +9,12 @@ const MAX_SNIPPET_CHARS = Number(process.env.AGENT_SOURCE_SNIPPET_CHARS ?? 800);
 const ALLOWED_EXTENSIONS = new Set(['.go', '.ts', '.tsx', '.js', '.yaml', '.yml', '.md', '.json']);
 const SENSITIVE_PATH_PATTERN = /(kubeconfig|auth|secret|credential|token|\.env|id_rsa)/i;
 
+type CollectedFiles = {
+  root: string;
+  files: string[];
+  error?: string;
+};
+
 export async function searchSealosSource(input: unknown): Promise<SearchToolResponse> {
   const { query, limit = 5, pathHint = '' } = SearchSealosSourceInputSchema.parse(input);
   const roots = getRoots(process.env.AGENT_SEALOS_SOURCE_ROOTS || process.env.AGENT_SEALOS_SOURCE_ROOT || '');
@@ -16,17 +22,27 @@ export async function searchSealosSource(input: unknown): Promise<SearchToolResp
     return { query, matches: [], total: 0, error: { reason: 'NotConfigured', message: 'Sealos source root is not configured' }, success: false };
   }
   const matches = [];
+  const rootErrors: string[] = [];
   for (const root of roots) {
-    const files = await collectFiles(root, pathHint);
-    for (const file of files) {
-      const content = await readFile(file, 'utf8');
+    const collected = await collectFiles(root, pathHint);
+    if (collected.error) {
+      rootErrors.push(collected.error);
+      continue;
+    }
+    for (const file of collected.files) {
+      let content: string;
+      try {
+        content = await readFile(file, 'utf8');
+      } catch {
+        continue;
+      }
       const index = content.toLowerCase().indexOf(query.toLowerCase());
       if (index < 0) {
         continue;
       }
       matches.push({
-        root,
-        path: path.relative(root, file),
+        root: collected.root,
+        path: path.relative(collected.root, file),
         snippet: content.slice(Math.max(0, index - 160), index + MAX_SNIPPET_CHARS),
       });
       if (matches.length >= limit) {
@@ -34,10 +50,16 @@ export async function searchSealosSource(input: unknown): Promise<SearchToolResp
       }
     }
   }
+  if (rootErrors.length === roots.length) {
+    const reason = rootErrors.some((error) => error.includes('outside configured source root'))
+      ? 'PathOutsideRoot'
+      : 'RootUnavailable';
+    return { query, matches: [], total: 0, error: { reason, message: rootErrors[0] ?? 'Sealos source root is not available' }, success: false };
+  }
   return { query, matches, total: matches.length, success: true };
 }
 
-async function collectFiles(root: string, pathHint: string): Promise<string[]> {
+async function collectFiles(root: string, pathHint: string): Promise<CollectedFiles> {
   const out: string[] = [];
   let resolvedRoot: string;
   let startPath: string;
@@ -45,13 +67,17 @@ async function collectFiles(root: string, pathHint: string): Promise<string[]> {
     resolvedRoot = await realpath(path.resolve(root));
     startPath = await realpath(path.resolve(resolvedRoot, pathHint));
   } catch {
-    return out;
+    return { root, files: [], error: 'Sealos source root or pathHint is not available' };
   }
   if (!isPathInsideRoot(startPath, resolvedRoot)) {
-    return out;
+    return { root: resolvedRoot, files: [], error: 'pathHint is outside configured source root' };
   }
-  await walk(startPath, resolvedRoot, out);
-  return out.slice(0, MAX_FILES);
+  try {
+    await walk(startPath, resolvedRoot, out);
+  } catch {
+    return { root: resolvedRoot, files: [], error: 'Sealos source root or pathHint is not available' };
+  }
+  return { root: resolvedRoot, files: out.slice(0, MAX_FILES) };
 }
 
 async function walk(current: string, root: string, out: string[]): Promise<void> {
@@ -84,7 +110,12 @@ async function walk(current: string, root: string, out: string[]): Promise<void>
       await walk(resolvedFullPath, root, out);
       continue;
     }
-    const info = await stat(resolvedFullPath);
+    let info;
+    try {
+      info = await stat(resolvedFullPath);
+    } catch {
+      continue;
+    }
     if (ALLOWED_EXTENSIONS.has(path.extname(entry.name).toLowerCase()) && info.size <= MAX_FILE_BYTES) {
       out.push(resolvedFullPath);
     }

@@ -338,6 +338,8 @@ Investigation Rules:
 - Select "none" only when the current turn is clearly just a greeting, thanks, acknowledgement, filler, or a pure conversational reply that does not require checking live cluster or namespace state.
 - Never request shell, raw kubeconfig, -A, platform namespace, system namespace, cluster-scoped resources, Secret data, connection strings, object storage access keys, or write operations.
 - Knowledge and source search results are context, not live cluster state.
+- If evidence or missing evidence says knowledge or source search was unavailable or returned no matches, do not claim that KB/source context was successfully checked.
+- Use knowledge/source context for playbook or platform behavior only; current root cause still requires namespace evidence unless the ticket only asks product behavior.
 - Do not repeat the same tool with the same input unless you explain what new evidence it can produce.
 - If the user is still troubleshooting, is asking about current status, is correcting the previous target, or is asking about any live issue related to namespace resources, do not select "none".
 - If the request may depend on current cluster or namespace state, do not select "none" just because the latest message is short or ambiguous.

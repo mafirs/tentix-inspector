@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from 'fs/promises';
+import { readdir, readFile, realpath, stat } from 'fs/promises';
 import * as path from 'path';
 import { SearchToolResponse } from '../kubernetes/types';
 import { SearchKnowledgeInputSchema } from './types';
@@ -8,6 +8,12 @@ const MAX_FILE_BYTES = Number(process.env.AGENT_KNOWLEDGE_MAX_FILE_BYTES ?? 200_
 const MAX_SNIPPET_CHARS = Number(process.env.AGENT_KNOWLEDGE_SNIPPET_CHARS ?? 600);
 const ALLOWED_EXTENSIONS = new Set(['.md', '.txt']);
 
+type CollectedFiles = {
+  root: string;
+  files: string[];
+  error?: string;
+};
+
 export async function searchKnowledge(input: unknown): Promise<SearchToolResponse> {
   const { query, limit = 5 } = SearchKnowledgeInputSchema.parse(input);
   const roots = getRoots(process.env.AGENT_KNOWLEDGE_ROOTS || process.env.AGENT_KNOWLEDGE_ROOT || '');
@@ -15,17 +21,27 @@ export async function searchKnowledge(input: unknown): Promise<SearchToolRespons
     return { query, matches: [], total: 0, error: { reason: 'NotConfigured', message: 'knowledge root is not configured' }, success: false };
   }
   const matches = [];
+  const rootErrors: string[] = [];
   for (const root of roots) {
-    const files = await collectFiles(root);
-    for (const file of files) {
-      const content = await readFile(file, 'utf8');
+    const collected = await collectFiles(root);
+    if (collected.error) {
+      rootErrors.push(collected.error);
+      continue;
+    }
+    for (const file of collected.files) {
+      let content: string;
+      try {
+        content = await readFile(file, 'utf8');
+      } catch {
+        continue;
+      }
       const index = content.toLowerCase().indexOf(query.toLowerCase());
       if (index < 0) {
         continue;
       }
       matches.push({
-        root,
-        path: path.relative(root, file),
+        root: collected.root,
+        path: path.relative(collected.root, file),
         snippet: content.slice(Math.max(0, index - 120), index + MAX_SNIPPET_CHARS),
       });
       if (matches.length >= limit) {
@@ -33,13 +49,22 @@ export async function searchKnowledge(input: unknown): Promise<SearchToolRespons
       }
     }
   }
+  if (rootErrors.length === roots.length) {
+    return { query, matches: [], total: 0, error: { reason: 'RootUnavailable', message: 'knowledge root is not available' }, success: false };
+  }
   return { query, matches, total: matches.length, success: true };
 }
 
-async function collectFiles(root: string): Promise<string[]> {
+async function collectFiles(root: string): Promise<CollectedFiles> {
   const out: string[] = [];
-  await walk(root, out);
-  return out.slice(0, MAX_FILES);
+  let resolvedRoot: string;
+  try {
+    resolvedRoot = await realpath(path.resolve(root));
+    await walk(resolvedRoot, out);
+  } catch {
+    return { root, files: [], error: 'knowledge root is not available' };
+  }
+  return { root: resolvedRoot, files: out.slice(0, MAX_FILES) };
 }
 
 async function walk(current: string, out: string[]): Promise<void> {
@@ -56,7 +81,12 @@ async function walk(current: string, out: string[]): Promise<void> {
       await walk(fullPath, out);
       continue;
     }
-    const info = await stat(fullPath);
+    let info;
+    try {
+      info = await stat(fullPath);
+    } catch {
+      continue;
+    }
     if (ALLOWED_EXTENSIONS.has(path.extname(entry.name).toLowerCase()) && info.size <= MAX_FILE_BYTES) {
       out.push(fullPath);
     }
