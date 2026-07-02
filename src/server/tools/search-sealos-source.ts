@@ -18,7 +18,10 @@ type CollectedFiles = {
 export async function searchSealosSource(input: unknown): Promise<SearchToolResponse> {
   const { query, limit = 5, pathHint = '' } = SearchSealosSourceInputSchema.parse(input);
   const roots = getRoots(process.env.AGENT_SEALOS_SOURCE_ROOTS || process.env.AGENT_SEALOS_SOURCE_ROOT || '');
+  const startedAt = Date.now();
+  console.error(`[Server] Executing: search_sealos_source roots=${roots.length} limit=${limit} pathHintSet=${Boolean(pathHint)} queryChars=${query.length}`);
   if (roots.length === 0) {
+    console.error(`[Server] search_sealos_source result: error reason=NotConfigured total=0 elapsedMs=${Date.now() - startedAt}`);
     return { query, matches: [], total: 0, error: { reason: 'NotConfigured', message: 'Sealos source root is not configured' }, success: false };
   }
   const matches = [];
@@ -46,6 +49,7 @@ export async function searchSealosSource(input: unknown): Promise<SearchToolResp
         snippet: content.slice(Math.max(0, index - 160), index + MAX_SNIPPET_CHARS),
       });
       if (matches.length >= limit) {
+        console.error(`[Server] search_sealos_source result: success total=${matches.length} elapsedMs=${Date.now() - startedAt}`);
         return { query, matches, total: matches.length, success: true };
       }
     }
@@ -54,8 +58,10 @@ export async function searchSealosSource(input: unknown): Promise<SearchToolResp
     const reason = rootErrors.some((error) => error.includes('outside configured source root'))
       ? 'PathOutsideRoot'
       : 'RootUnavailable';
+    console.error(`[Server] search_sealos_source result: error reason=${reason} total=0 elapsedMs=${Date.now() - startedAt}`);
     return { query, matches: [], total: 0, error: { reason, message: rootErrors[0] ?? 'Sealos source root is not available' }, success: false };
   }
+  console.error(`[Server] search_sealos_source result: ${matches.length === 0 ? 'no_data' : 'success'} total=${matches.length} elapsedMs=${Date.now() - startedAt}`);
   return { query, matches, total: matches.length, success: true };
 }
 

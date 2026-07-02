@@ -17,7 +17,10 @@ type CollectedFiles = {
 export async function searchKnowledge(input: unknown): Promise<SearchToolResponse> {
   const { query, limit = 5 } = SearchKnowledgeInputSchema.parse(input);
   const roots = getRoots(process.env.AGENT_KNOWLEDGE_ROOTS || process.env.AGENT_KNOWLEDGE_ROOT || '');
+  const startedAt = Date.now();
+  console.error(`[Server] Executing: search_knowledge roots=${roots.length} limit=${limit} queryChars=${query.length}`);
   if (roots.length === 0) {
+    console.error(`[Server] search_knowledge result: error reason=NotConfigured total=0 elapsedMs=${Date.now() - startedAt}`);
     return { query, matches: [], total: 0, error: { reason: 'NotConfigured', message: 'knowledge root is not configured' }, success: false };
   }
   const matches = [];
@@ -45,13 +48,16 @@ export async function searchKnowledge(input: unknown): Promise<SearchToolRespons
         snippet: content.slice(Math.max(0, index - 120), index + MAX_SNIPPET_CHARS),
       });
       if (matches.length >= limit) {
+        console.error(`[Server] search_knowledge result: success total=${matches.length} elapsedMs=${Date.now() - startedAt}`);
         return { query, matches, total: matches.length, success: true };
       }
     }
   }
   if (rootErrors.length === roots.length) {
+    console.error(`[Server] search_knowledge result: error reason=RootUnavailable total=0 elapsedMs=${Date.now() - startedAt}`);
     return { query, matches: [], total: 0, error: { reason: 'RootUnavailable', message: 'knowledge root is not available' }, success: false };
   }
+  console.error(`[Server] search_knowledge result: ${matches.length === 0 ? 'no_data' : 'success'} total=${matches.length} elapsedMs=${Date.now() - startedAt}`);
   return { query, matches, total: matches.length, success: true };
 }
 
