@@ -197,6 +197,81 @@ type RouterMessageContentItem =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getRouterErrorText(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+
+  function visit(value: unknown): void {
+    if (typeof value === 'string') {
+      parts.push(value);
+      return;
+    }
+
+    if (value instanceof Error) {
+      parts.push(value.message);
+    }
+
+    if (!isRecord(value)) {
+      return;
+    }
+
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+
+    for (const key of ['message', 'code', 'type', 'status', 'param']) {
+      const part = value[key];
+      if (typeof part === 'string' || typeof part === 'number') {
+        parts.push(String(part));
+      }
+    }
+
+    visit(value.error);
+  }
+
+  visit(error);
+  return parts.length > 0 ? parts.join(' ') : formatLogValue(error);
+}
+
+function isResponseFormatUnavailableError(error: unknown): boolean {
+  return /response_format type is unavailable/i.test(getRouterErrorText(error));
+}
+
+function parseRouterDecisionFromJsonObjectResponse(response: unknown): RouterDecision {
+  const content = isRecord(response) ? response.content : undefined;
+  let text = '';
+
+  if (typeof content === 'string') {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (isRecord(item) && typeof item.text === 'string') return item.text;
+        return '';
+      })
+      .join('');
+  }
+
+  if (!text.trim()) {
+    throw new Error('[Router] JSON object fallback response content is empty');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`[Router] JSON object fallback returned invalid JSON: ${getRouterErrorText(error)}`);
+  }
+
+  return routerDecisionSchema.parse(parsed);
+}
+
 function buildRouterUserContext(context: AgentRouterContext): string {
   return `
     User Context:
@@ -275,49 +350,123 @@ Investigation Rules:
 
 Examples:
 User: 远程连接不上
-Return: {"action":"tool","selectedTool":"list_devbox_by_ns","toolInput":{},"reason":"DevBox connectivity needs live namespace evidence"}
+Return: {"action":"tool","selectedTool":"list_devbox_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"DevBox connectivity needs live namespace evidence"}
 
 User: Trae无法连接
-Return: {"action":"tool","selectedTool":"list_devbox_by_ns","toolInput":{},"reason":"DevBox IDE connectivity needs DevBox status"}
+Return: {"action":"tool","selectedTool":"list_devbox_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"DevBox IDE connectivity needs DevBox status"}
 
 User: 余额不足被释放了
-Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"reason":"billing suspension should inspect debt state"}
+Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"billing suspension should inspect debt state"}
 
 User: 充钱后中的项目还是找不到
-Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"reason":"post-recharge recovery should inspect debt state"}
+Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"post-recharge recovery should inspect debt state"}
 
 User: 公网域名无法访问
-Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"reason":"external access should inspect ingress first"}
+Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"external access should inspect ingress first"}
 
 User: 如何查看应用的对外ip？
-Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"reason":"external IP is exposed by ingress state"}
+Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"external IP is exposed by ingress state"}
 
 User: ingress
-Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"reason":"ingress request needs ingress state"}
+Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"ingress request needs ingress state"}
 
 User: 谢谢，知道了
-Return: {"action":"none","toolInput":{},"reason":"acknowledgement only"}
+Return: {"action":"none","selectedTool":null,"toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"acknowledgement only"}
 
 Output Format:
 You MUST return a strictly valid JSON object. No markdown.
-Structure:
+Every field is required:
 {
-  "action": "tool|final|insufficient|none",
-  "selectedTool": "tool_name_from_above",
+  "action": "tool",
+  "selectedTool": "tool_name_from_above_or_null",
   "toolInput": {},
-  "finalAnswer": "",
-  "customerReplyDraft": "",
+  "finalAnswer": null,
+  "customerReplyDraft": null,
   "missingEvidence": [],
   "escalationAdvice": [],
   "reason": ""
 }
 Note:
+- action must be exactly one of "tool", "final", "insufficient", "none".
+- selectedTool must be an exact tool name from Available Tools when action is "tool"; otherwise selectedTool must be null.
+- toolInput must always be an object. Use {} when no arguments are needed.
+- finalAnswer, customerReplyDraft, and reason must be strings or null.
+- missingEvidence and escalationAdvice must always be arrays of strings. Use [] when empty.
 - Do not add namespace into toolInput. The server injects trusted namespace.
 - For describe_resource_summary_by_ns, provide kind and name only when evidence already identifies a target resource.
 `;
 
-const structuredRouter = llm.withStructuredOutput(routerDecisionSchema);
-const structuredRouterWithRaw = llm.withStructuredOutput(routerDecisionSchema, { includeRaw: true });
+const structuredRouter = llm.withStructuredOutput(routerDecisionSchema, {
+  method: 'jsonSchema',
+  name: 'router_decision',
+});
+const structuredRouterWithRaw = llm.withStructuredOutput(routerDecisionSchema, {
+  method: 'jsonSchema',
+  name: 'router_decision',
+  includeRaw: true,
+});
+const jsonObjectRouter = llm.withConfig({ response_format: { type: 'json_object' } });
+const routerCapabilityCache = new Map<string, 'json_object'>();
+const routerCapabilityKey = `${formattedBaseUrl ?? ''}|${AI_MODEL}`;
+const ROUTER_JSON_SCHEMA_MAX_ATTEMPTS = 2;
+
+function shouldPreferJsonObjectRouter(): boolean {
+  return routerCapabilityCache.get(routerCapabilityKey) === 'json_object';
+}
+
+function markJsonSchemaUnavailable(): void {
+  routerCapabilityCache.set(routerCapabilityKey, 'json_object');
+}
+
+async function invokeStructuredRouter(messages: Array<{ role: string; content: unknown }>): Promise<RouterDecision> {
+  if (isDevelopment) {
+    const rawResponse = await structuredRouterWithRaw.invoke(messages as any) as RouterStructuredResponse;
+    logDevelopment('[Router] AI raw response:', formatLogValue(rawResponse.raw));
+
+    if (!rawResponse.parsed) {
+      throw new Error('[Router] AI raw response could not be parsed');
+    }
+
+    return rawResponse.parsed;
+  }
+
+  return await structuredRouter.invoke(messages as any) as RouterDecision;
+}
+
+async function invokeJsonObjectRouter(messages: Array<{ role: string; content: unknown }>): Promise<RouterDecision> {
+  const rawResponse = await jsonObjectRouter.invoke(messages as any);
+  logDevelopment('[Router] AI json_object fallback response:', formatLogValue(rawResponse));
+  return parseRouterDecisionFromJsonObjectResponse(rawResponse);
+}
+
+async function invokeStructuredRouterWithResponseFormatFallback(
+  messages: Array<{ role: string; content: unknown }>
+): Promise<RouterDecision> {
+  let lastResponseFormatError: unknown;
+
+  for (let attempt = 1; attempt <= ROUTER_JSON_SCHEMA_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await invokeStructuredRouter(messages);
+    } catch (error) {
+      if (!isResponseFormatUnavailableError(error)) {
+        throw error;
+      }
+
+      lastResponseFormatError = error;
+      console.error(
+        `[Router] json_schema response_format unavailable (attempt ${attempt}/${ROUTER_JSON_SCHEMA_MAX_ATTEMPTS}):`,
+        getRouterErrorText(error)
+      );
+    }
+  }
+
+  markJsonSchemaUnavailable();
+  console.error(
+    '[Router] json_schema response_format unavailable after two attempts, falling back to json_object:',
+    getRouterErrorText(lastResponseFormatError)
+  );
+  return await invokeJsonObjectRouter(messages);
+}
 
 // --- Node 1: Init ---
 async function initContextNode(state: AgentState): Promise<Partial<AgentState>> {
@@ -395,17 +544,10 @@ async function decideNextAction(context: AgentRouterContext): Promise<AgentRoute
     ];
     let decision: RouterDecision;
 
-    if (isDevelopment) {
-      const rawResponse = await structuredRouterWithRaw.invoke(messages) as RouterStructuredResponse;
-      logDevelopment('[Router] AI raw response:', formatLogValue(rawResponse.raw));
-
-      if (!rawResponse.parsed) {
-        throw new Error('[Router] AI raw response could not be parsed');
-      }
-
-      decision = rawResponse.parsed;
+    if (shouldPreferJsonObjectRouter()) {
+      decision = await invokeJsonObjectRouter(messages);
     } else {
-      decision = await structuredRouter.invoke(messages) as RouterDecision;
+      decision = await invokeStructuredRouterWithResponseFormatFallback(messages);
     }
 
     console.log('[Router] AI structured decision:', JSON.stringify(decision));
