@@ -10,42 +10,13 @@ import { KubernetesClient } from '../kubernetes/client';
 import { ChatOpenAI } from "@langchain/openai"; // 2. 引入 OpenAI 适配器
 import { z } from 'zod';
 
-// 导入工具定义和函数
 import {
-  LIST_PODS_BY_NS_TOOL,
-  LIST_DEVBOX_BY_NS_TOOL,
-  LIST_CLUSTER_BY_NS_TOOL,
-  LIST_QUOTA_BY_NS_TOOL,
-  LIST_INGRESS_BY_NS_TOOL,
-  LIST_CRONJOBS_BY_NS_TOOL,
-  LIST_EVENTS_BY_NS_TOOL,
-  LIST_DEBT_BY_NS_TOOL,
-  LIST_OBJECTSTORAGEBUCKET_BY_NS_TOOL,
-  LIST_CERTIFICATE_BY_NS_TOOL,
-  LIST_DEPLOYMENTS_BY_NS_TOOL,
-  LIST_STATEFULSETS_BY_NS_TOOL,
-  LIST_APPS_BY_NS_TOOL,
-  LIST_PVCS_BY_NS_TOOL,
-  GET_LOGS_BY_NS_TOOL,
-  NONE_TOOL,
-} from '../tools/types';
-
-import { listPodsByNamespace } from '../tools/list-pods-by-ns';
-import { listDevboxByNamespace } from '../tools/list-devbox-by-ns';
-import { listClusterByNamespace } from '../tools/list-cluster-by-ns';
-import { listQuotaByNamespace } from '../tools/list-quota-by-ns';
-import { listIngressByNamespace } from '../tools/list-ingress-by-ns';
-import { listCronjobsByNamespace } from '../tools/list-cronjobs-by-ns';
-import { listEventsByNamespace } from '../tools/list-events-by-ns';
-import { listDebtByNamespace } from '../tools/list-debt-by-ns';
-import { listObjectStorageBucketByNamespace } from '../tools/list-objectstoragebucket-by-ns';
-import { listCertificateByNamespace } from '../tools/list-certificate-by-ns';
-import { listDeploymentsByNamespace } from '../tools/list-deployments-by-ns';
-import { listStatefulSetsByNamespace } from '../tools/list-statefulsets-by-ns';
-import { listAppsByNamespace } from '../tools/list-apps-by-ns';
-import { listPvcsByNamespace } from '../tools/list-pvcs-by-ns';
-import { getLogsByNamespace } from '../tools/get-logs-by-ns';
-import { returnNoneResult } from '../tools/none-tool';
+  AGENT_TOOL_NAMES,
+  type AgentToolName,
+  buildAgentToolsDescription,
+} from './tool-registry';
+import { runAgentSession } from './session';
+import type { AgentRouterContext, AgentRouterDecision, AgentTicketContext } from './session-types';
 
 // --- A. 初始化 AI 模型 (Gemini) ---
 const AI_API_KEY = process.env.AI_API_KEY;
@@ -187,9 +158,6 @@ export interface AgentState {
   requestKubeconfig?: string;
 
   k8sClient?: KubernetesClient;
-  selectedTool?: ToolName;
-  toolInput?: unknown;
-
   finalResult?: unknown;
 }
 
@@ -207,94 +175,17 @@ export const ZONE_KUBECONFIG_MAP: Record<string, string> = {
 
 export const SUPPORTED_ZONES = Object.keys(ZONE_KUBECONFIG_MAP);
 
-// 工具注册表
-const TOOLS = {
-  [LIST_PODS_BY_NS_TOOL.name]: {
-    description: LIST_PODS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => listPodsByNamespace(client, input as any),
-  },
-  [LIST_DEVBOX_BY_NS_TOOL.name]: {
-    description: LIST_DEVBOX_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => listDevboxByNamespace(client, input as any),
-  },
-  [LIST_CLUSTER_BY_NS_TOOL.name]: {
-    description: LIST_CLUSTER_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => listClusterByNamespace(client, input as any),
-  },
-  [LIST_QUOTA_BY_NS_TOOL.name]: {
-    description: LIST_QUOTA_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => listQuotaByNamespace(client, input as any),
-  },
-  [LIST_INGRESS_BY_NS_TOOL.name]: {
-    description: LIST_INGRESS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => listIngressByNamespace(client, input as any),
-  },
-  [LIST_CRONJOBS_BY_NS_TOOL.name]: {
-    description: LIST_CRONJOBS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => listCronjobsByNamespace(client, input as any),
-  },
-  [LIST_EVENTS_BY_NS_TOOL.name]: {
-    description: LIST_EVENTS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => listEventsByNamespace(client, input as any),
-  },
-  [LIST_DEBT_BY_NS_TOOL.name]: {
-    description: LIST_DEBT_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => listDebtByNamespace(client, input as any),
-  },
-  [LIST_OBJECTSTORAGEBUCKET_BY_NS_TOOL.name]: {
-    description: LIST_OBJECTSTORAGEBUCKET_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) =>
-      listObjectStorageBucketByNamespace(client, input as any),
-  },
-  [LIST_CERTIFICATE_BY_NS_TOOL.name]: {
-    description: LIST_CERTIFICATE_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) =>
-      listCertificateByNamespace(client, input as any),
-  },
-  [LIST_DEPLOYMENTS_BY_NS_TOOL.name]: {
-    description: LIST_DEPLOYMENTS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) =>
-      listDeploymentsByNamespace(client, input as any),
-  },
-  [LIST_STATEFULSETS_BY_NS_TOOL.name]: {
-    description: LIST_STATEFULSETS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) =>
-      listStatefulSetsByNamespace(client, input as any),
-  },
-  [LIST_APPS_BY_NS_TOOL.name]: {
-    description: LIST_APPS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) =>
-      listAppsByNamespace(client, input as any),
-  },
-  [LIST_PVCS_BY_NS_TOOL.name]: {
-    description: LIST_PVCS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) =>
-      listPvcsByNamespace(client, input as any),
-  },
-  [GET_LOGS_BY_NS_TOOL.name]: {
-    description: GET_LOGS_BY_NS_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) =>
-      getLogsByNamespace(client, input as any),
-  },
-  [NONE_TOOL.name]: {
-    description: NONE_TOOL.description,
-    run: (client: KubernetesClient, input: unknown) => {
-      void client;
-      void input;
-      return returnNoneResult();
-    },
-  },
-} as const;
-
-const TOOL_DESCRIPTION_OVERRIDES = loadToolDescriptionOverrides(Object.keys(TOOLS));
-
-type ToolName = Extract<keyof typeof TOOLS, string>;
-
-const TOOL_NAMES = Object.keys(TOOLS) as [ToolName, ...ToolName[]];
+const TOOL_DESCRIPTION_OVERRIDES = loadToolDescriptionOverrides([...AGENT_TOOL_NAMES]);
 
 const routerDecisionSchema = z.object({
-  selectedTool: z.enum(TOOL_NAMES),
-  toolInput: z.object({}).default({}),
+  action: z.enum(['tool', 'final', 'insufficient', 'none']),
+  selectedTool: z.enum(AGENT_TOOL_NAMES).optional(),
+  toolInput: z.record(z.unknown()).default({}),
+  finalAnswer: z.string().optional(),
+  customerReplyDraft: z.string().optional(),
+  missingEvidence: z.array(z.string()).default([]),
+  escalationAdvice: z.array(z.string()).default([]),
+  reason: z.string().optional(),
 });
 type RouterDecision = z.infer<typeof routerDecisionSchema>;
 type RouterStructuredResponse = {
@@ -306,22 +197,39 @@ type RouterMessageContentItem =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } };
 
-function buildRouterUserContext(state: AgentState): string {
+function buildRouterUserContext(context: AgentRouterContext): string {
   return `
     User Context:
-    - Default Namespace: ${state.namespace}
-    - Ticket Title: ${state.ticketTitle}
-    - Ticket Module: ${state.ticketModule}
-    - Ticket Category: ${state.ticketCategory}
-    - Ticket Description: ${state.ticketDescription}
-    - History Messages: ${state.historyMessages}
-    - Latest Message: ${state.latestMessage}
+    - Default Namespace: ${context.ticket.namespace}
+    - Ticket Title: ${context.ticket.ticketTitle}
+    - Ticket Module: ${context.ticket.ticketModule}
+    - Ticket Category: ${context.ticket.ticketCategory}
+    - Ticket Description: ${context.ticket.ticketDescription}
+    - History Messages: ${context.ticket.historyMessages}
+    - Latest Message: ${context.ticket.latestMessage}
+
+    Runtime:
+    - Turns Used: ${context.usage.turns}/${context.budgets.maxTurns}
+    - Tool Calls Used: ${context.usage.toolCalls}/${context.budgets.maxToolCalls}
+    - Runtime Used Ms: ${context.usage.runtimeMs}/${context.budgets.maxRuntimeMs}
+
+    Evidence Summary:
+    ${context.evidence.map((item, index) => `${index + 1}. [${item.sourceType}] ${item.source}: ${item.summary}`).join('\n') || '- none'}
+
+    Last Tool Result:
+    ${context.lastToolResultSummary || '- none'}
+
+    Trace Summary:
+    ${context.trace.map((item) => `turn=${item.turn} action=${item.action} tool=${item.tool ?? ''} status=${item.resultStatus ?? ''} reason=${item.reason ?? ''}`).join('\n') || '- none'}
+
+    Missing Evidence So Far:
+    ${(context.missingEvidence.length ? context.missingEvidence : ['none']).join('\n')}
   `;
 }
 
-function buildRouterUserContent(state: AgentState): string | RouterMessageContentItem[] {
-  const userContext = buildRouterUserContext(state);
-  const imageUrls = Array.from(new Set(state.latestMessageImages.filter(Boolean))).slice(-6);
+function buildRouterUserContent(context: AgentRouterContext): string | RouterMessageContentItem[] {
+  const userContext = buildRouterUserContext(context);
+  const imageUrls = Array.from(new Set(context.ticket.latestMessageImages.filter(Boolean))).slice(-6);
 
   if (imageUrls.length === 0) {
     return userContext;
@@ -337,23 +245,25 @@ function buildRouterUserContent(state: AgentState): string | RouterMessageConten
 }
 
 // 自动生成 AI Prompt (无需手动维护两份列表)
-const GENERATED_TOOLS_DESC = Object.entries(TOOLS)
-  .map(([name, tool], index) => {
-    const description = TOOL_DESCRIPTION_OVERRIDES[name] ?? tool.description;
-    return `${index + 1}. ${name}: ${description}`;
-  })
-  .join('\n');
+const GENERATED_TOOLS_DESC = buildAgentToolsDescription(TOOL_DESCRIPTION_OVERRIDES);
 
 const SYSTEM_PROMPT = `
 You are a Kubernetes Expert Agent.
-Your job is to select the BEST tool based on the user's ticket description.
+Your job is to run a bounded read-only investigation for a k8s-sealos support ticket.
 
 Available Tools:
 ${GENERATED_TOOLS_DESC}
 
-Tool Selection Rules:
+Investigation Rules:
 - Use Ticket Title, Ticket Description, Ticket Module, Ticket Category, History Messages, and Latest Message together as one routing context. Do not rely on Latest Message alone.
+- Every turn receives accumulated evidence and trace. Choose the next action based on what is still missing.
+- Choose action "tool" when one more allowed read-only tool can add useful evidence.
+- Choose action "final" when the current namespace evidence is enough to answer.
+- Choose action "insufficient" when the issue likely needs platform-side, cross-namespace, Secret, shell, or unavailable evidence.
 - Select "none" only when the current turn is clearly just a greeting, thanks, acknowledgement, filler, or a pure conversational reply that does not require checking live cluster or namespace state.
+- Never request shell, raw kubeconfig, -A, platform namespace, system namespace, cluster-scoped resources, Secret data, connection strings, object storage access keys, or write operations.
+- Knowledge and source search results are context, not live cluster state.
+- Do not repeat the same tool with the same input unless you explain what new evidence it can produce.
 - If the user is still troubleshooting, is asking about current status, is correcting the previous target, or is asking about any live issue related to namespace resources, do not select "none".
 - If the request may depend on current cluster or namespace state, do not select "none" just because the latest message is short or ambiguous.
 - If the user mentions public access, external access, 公网, 外网, domain, 域名, CNAME, host, route, ingress, external IP, HTTPS, SSL, certificate, 证书, port exposure, or "访问不到", prefer "list_ingress_by_ns" as the first live-state check unless the request is specifically about certificate issuance or renewal status.
@@ -365,40 +275,45 @@ Tool Selection Rules:
 
 Examples:
 User: 远程连接不上
-Return: {"selectedTool":"list_devbox_by_ns","toolInput":{}}
+Return: {"action":"tool","selectedTool":"list_devbox_by_ns","toolInput":{},"reason":"DevBox connectivity needs live namespace evidence"}
 
 User: Trae无法连接
-Return: {"selectedTool":"list_devbox_by_ns","toolInput":{}}
+Return: {"action":"tool","selectedTool":"list_devbox_by_ns","toolInput":{},"reason":"DevBox IDE connectivity needs DevBox status"}
 
 User: 余额不足被释放了
-Return: {"selectedTool":"list_debt_by_ns","toolInput":{}}
+Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"reason":"billing suspension should inspect debt state"}
 
 User: 充钱后中的项目还是找不到
-Return: {"selectedTool":"list_debt_by_ns","toolInput":{}}
+Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"reason":"post-recharge recovery should inspect debt state"}
 
 User: 公网域名无法访问
-Return: {"selectedTool":"list_ingress_by_ns","toolInput":{}}
+Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"reason":"external access should inspect ingress first"}
 
 User: 如何查看应用的对外ip？
-Return: {"selectedTool":"list_ingress_by_ns","toolInput":{}}
+Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"reason":"external IP is exposed by ingress state"}
 
 User: ingress
-Return: {"selectedTool":"list_ingress_by_ns","toolInput":{}}
+Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"reason":"ingress request needs ingress state"}
 
 User: 谢谢，知道了
-Return: {"selectedTool":"none","toolInput":{}}
+Return: {"action":"none","toolInput":{},"reason":"acknowledgement only"}
 
 Output Format:
 You MUST return a strictly valid JSON object. No markdown.
 Structure:
 {
+  "action": "tool|final|insufficient|none",
   "selectedTool": "tool_name_from_above",
-  "toolInput": {}
+  "toolInput": {},
+  "finalAnswer": "",
+  "customerReplyDraft": "",
+  "missingEvidence": [],
+  "escalationAdvice": [],
+  "reason": ""
 }
 Note:
-- 'toolInput' must always be an empty object {}.
-- Do not add namespace or any extra fields into 'toolInput'.
-- The server will inject the trusted namespace during execution.
+- Do not add namespace into toolInput. The server injects trusted namespace.
+- For describe_resource_summary_by_ns, provide kind and name only when evidence already identifies a target resource.
 `;
 
 const structuredRouter = llm.withStructuredOutput(routerDecisionSchema);
@@ -467,11 +382,11 @@ async function initContextNode(state: AgentState): Promise<Partial<AgentState>> 
 }
 
 // --- Node 2: Router (AI 智能版) ---
-async function routerNode(state: AgentState): Promise<Partial<AgentState>> {
+async function decideNextAction(context: AgentRouterContext): Promise<AgentRouterDecision> {
   console.log(`[Router] Asking AI (${AI_MODEL}) to select tool...`);
 
-  const userContext = buildRouterUserContext(state);
-  const routerUserContent = buildRouterUserContent(state);
+  const userContext = buildRouterUserContext(context);
+  const routerUserContent = buildRouterUserContent(context);
 
   async function invokeRouter(content: string | RouterMessageContentItem[]) {
     const messages = [
@@ -495,10 +410,8 @@ async function routerNode(state: AgentState): Promise<Partial<AgentState>> {
 
     console.log('[Router] AI structured decision:', JSON.stringify(decision));
 
-    const selectedTool = decision.selectedTool;
-
-    if (!Object.prototype.hasOwnProperty.call(TOOLS, selectedTool)) {
-      throw new Error(`[Router] AI selected unsupported tool: ${selectedTool}`);
+    if (decision.action === 'tool' && !decision.selectedTool) {
+      throw new Error('[Router] AI selected tool action without selectedTool');
     }
 
     const toolInput =
@@ -509,7 +422,8 @@ async function routerNode(state: AgentState): Promise<Partial<AgentState>> {
         : {};
 
     return {
-      selectedTool: selectedTool as ToolName,
+      ...decision,
+      selectedTool: decision.selectedTool as AgentToolName | undefined,
       toolInput
     };
   }
@@ -525,105 +439,47 @@ async function routerNode(state: AgentState): Promise<Partial<AgentState>> {
 
     return await invokeRouter(userContext);
   } catch (error) {
-    console.error("[Router] AI structured routing failed, falling back to list_pods", error);
-    // 兜底逻辑
-    return { 
-      selectedTool: 'list_pods_by_ns', 
-      toolInput: { namespace: state.namespace } 
+    console.error('[Router] AI structured routing failed, returning insufficient', error);
+    return {
+      action: 'insufficient',
+      missingEvidence: ['router decision failed'],
+      escalationAdvice: ['manual inspection required because router failed'],
+      reason: 'router_error',
     };
   }
 }
 
-// --- Node 3: Executor ---
-async function executorNode(state: AgentState): Promise<Partial<AgentState>> {
-  if (!state.k8sClient) {
-    throw new Error('[Agent] k8sClient not initialized');
-  }
-
-  const selectedTool: ToolName = (state.selectedTool ?? 'list_pods_by_ns') as ToolName;
-  const tool = TOOLS[selectedTool];
-
-  if (!tool) {
-    throw new Error(`[Agent] Unknown tool: ${String(state.selectedTool)}`);
-  }
-
-  // 不信任 LLM/toolInput 里的 namespace；最终执行强制使用 state.namespace
-  const rawToolInput = state.toolInput;
-  const toolInputObject =
-    rawToolInput && typeof rawToolInput === 'object' && !Array.isArray(rawToolInput)
-      ? (rawToolInput as Record<string, unknown>)
-      : {};
-  let input: unknown;
-
-  if (selectedTool === NONE_TOOL.name) {
-    input = {};
-  } else if (selectedTool === GET_LOGS_BY_NS_TOOL.name) {
-    input = {
-      ...toolInputObject,
-      namespace: state.namespace,
-      ticketModule: state.ticketModule,
-      ticketTitle: state.ticketTitle,
-      ticketDescription: state.ticketDescription,
-      historyMessages: state.historyMessages,
-      latestMessage: state.latestMessage,
-    };
-  } else {
-    input = {
-      ...toolInputObject,
-      namespace: state.namespace,
-    };
-  }
-
-  const result = await tool.run(state.k8sClient, input);
-
-  return {
-    finalResult: {
-      tool: selectedTool,
-      description: tool.description,
-      result,
-    },
-  };
-}
-
-// --- 构建图 (保留动态导入以防编译错误) ---
+// --- 构建图 (保留对外 runnable 接口) ---
 let cachedRunnable: AgentRunnable | null = null;
 
 export async function getAgentRunnable(): Promise<AgentRunnable> {
   if (cachedRunnable) return cachedRunnable;
 
-  const langgraph = (await import('@langchain/langgraph')) as any;
-  const START = langgraph.START;
-  const END = langgraph.END;
-  const StateGraph = langgraph.StateGraph;
-  const Annotation = langgraph.Annotation;
-
-  const GraphState = Annotation.Root({
-    zone: Annotation(),
-    namespace: Annotation(),
-    ticketTitle: Annotation(),
-    ticketModule: Annotation(),
-    ticketCategory: Annotation(),
-    ticketDescription: Annotation(),
-    historyMessages: Annotation(),
-    latestMessage: Annotation(),
-    latestMessageImages: Annotation(),
-    requestKubeconfig: Annotation(),
-
-    k8sClient: Annotation(),
-    selectedTool: Annotation(),
-    toolInput: Annotation(),
-    finalResult: Annotation(),
-  });
-
-  const workflow = new StateGraph(GraphState)
-    .addNode('init', initContextNode)
-    .addNode('router', routerNode)
-    .addNode('executor', executorNode)
-    .addEdge(START, 'init')
-    .addEdge('init', 'router')
-    .addEdge('router', 'executor')
-    .addEdge('executor', END);
-
-  cachedRunnable = workflow.compile() as AgentRunnable;
+  cachedRunnable = {
+    async invoke(input: AgentState): Promise<AgentState> {
+      const initResult = await initContextNode(input);
+      const initializedState: AgentState = { ...input, ...initResult };
+      if (!initializedState.k8sClient) {
+        throw new Error('[Agent] k8sClient not initialized');
+      }
+      const ticket: AgentTicketContext = {
+        zone: initializedState.zone,
+        namespace: initializedState.namespace,
+        ticketTitle: initializedState.ticketTitle,
+        ticketModule: initializedState.ticketModule,
+        ticketCategory: initializedState.ticketCategory,
+        ticketDescription: initializedState.ticketDescription,
+        historyMessages: initializedState.historyMessages,
+        latestMessage: initializedState.latestMessage,
+        latestMessageImages: initializedState.latestMessageImages,
+      };
+      const finalResult = await runAgentSession({
+        client: initializedState.k8sClient,
+        ticket,
+        decideNextAction,
+      });
+      return { ...initializedState, finalResult };
+    },
+  };
   return cachedRunnable;
 }

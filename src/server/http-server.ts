@@ -229,6 +229,10 @@ function sanitizeFinalResult(finalResult: unknown, status: number): unknown {
     return finalResult;
   }
 
+  if (finalResult.tool === 'agent_session') {
+    return sanitizeAgentSessionResult(finalResult);
+  }
+
   const result = finalResult.result;
   if (!isRecord(result) || result.success !== false) {
     return finalResult;
@@ -243,6 +247,49 @@ function sanitizeFinalResult(finalResult: unknown, status: number): unknown {
       },
     },
   };
+}
+
+function sanitizeAgentSessionResult(finalResult: Record<string, unknown>): unknown {
+  return {
+    ...finalResult,
+    trace: Array.isArray(finalResult.trace)
+      ? finalResult.trace.map((entry) => sanitizeTraceEntry(entry))
+      : [],
+    evidence: Array.isArray(finalResult.evidence)
+      ? finalResult.evidence.map((entry) => sanitizeEvidenceEntry(entry))
+      : [],
+  };
+}
+
+function sanitizeTraceEntry(entry: unknown): unknown {
+  if (!isRecord(entry)) {
+    return entry;
+  }
+  return {
+    ...entry,
+    error: typeof entry.error === 'string' ? sanitizeSensitiveText(entry.error) : entry.error,
+    resultPreview: typeof entry.resultPreview === 'string'
+      ? sanitizeSensitiveText(entry.resultPreview)
+      : entry.resultPreview,
+  };
+}
+
+function sanitizeEvidenceEntry(entry: unknown): unknown {
+  if (!isRecord(entry)) {
+    return entry;
+  }
+  return {
+    ...entry,
+    detailsPreview: typeof entry.detailsPreview === 'string'
+      ? sanitizeSensitiveText(entry.detailsPreview)
+      : entry.detailsPreview,
+  };
+}
+
+function sanitizeSensitiveText(value: string): string {
+  return value
+    .replace(/(authorization|kubeconfig|token|secret|password|accessKey|secretKey)\s*[:=]\s*[^,\s"}]+/gi, '$1=[redacted]')
+    .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g, '[redacted-pem]');
 }
 
 function handleJsonParseError(

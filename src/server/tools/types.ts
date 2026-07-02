@@ -342,3 +342,103 @@ export const GET_LOGS_BY_NS_TOOL = {
     required: ['namespace'],
   },
 };
+
+export const ListServicesByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+});
+export type ListServicesByNsInput = z.infer<typeof ListServicesByNsInputSchema>;
+export const LIST_SERVICES_BY_NS_TOOL = {
+  name: 'list_services_by_ns',
+  description: 'List Services and endpoint readiness in a namespace. Prefer this after ingress or app checks when external or internal access may fail because service selectors, ports, or endpoints are wrong.',
+  inputSchema: { type: 'object', properties: { namespace: { type: 'string' } }, required: ['namespace'] },
+};
+
+export const ListJobsByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+});
+export type ListJobsByNsInput = z.infer<typeof ListJobsByNsInputSchema>;
+export const LIST_JOBS_BY_NS_TOOL = {
+  name: 'list_jobs_by_ns',
+  description: 'List Kubernetes Jobs in a namespace. Prefer this for one-off task failures, backup jobs, restore jobs, migration jobs, and CronJob-created workload failures.',
+  inputSchema: { type: 'object', properties: { namespace: { type: 'string' } }, required: ['namespace'] },
+};
+
+export const ListOpsRequestsByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+});
+export type ListOpsRequestsByNsInput = z.infer<typeof ListOpsRequestsByNsInputSchema>;
+export const LIST_OPSREQUESTS_BY_NS_TOOL = {
+  name: 'list_opsrequests_by_ns',
+  description: 'List database OpsRequest-like CRDs in a namespace. Prefer this for database start, stop, scale, upgrade, restart, backup, restore, or operation stuck cases.',
+  inputSchema: { type: 'object', properties: { namespace: { type: 'string' } }, required: ['namespace'] },
+};
+
+export const ListBackupsByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+});
+export type ListBackupsByNsInput = z.infer<typeof ListBackupsByNsInputSchema>;
+export const LIST_BACKUPS_BY_NS_TOOL = {
+  name: 'list_backups_by_ns',
+  description: 'List backup-like CRDs in a namespace. Prefer this when database or app data backup, restore, snapshot, or backup retention is involved.',
+  inputSchema: { type: 'object', properties: { namespace: { type: 'string' } }, required: ['namespace'] },
+};
+
+export const ListInstancesByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+});
+export type ListInstancesByNsInput = z.infer<typeof ListInstancesByNsInputSchema>;
+export const LIST_INSTANCES_BY_NS_TOOL = {
+  name: 'list_instances_by_ns',
+  description: 'List instance-like database runtime CRDs in a namespace. Prefer this after cluster checks when database runtime instance status or per-instance readiness is needed.',
+  inputSchema: { type: 'object', properties: { namespace: { type: 'string' } }, required: ['namespace'] },
+};
+
+export const ListObjectStorageUserSummaryByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+});
+export type ListObjectStorageUserSummaryByNsInput = z.infer<typeof ListObjectStorageUserSummaryByNsInputSchema>;
+export const LIST_OBJECTSTORAGE_USER_SUMMARY_BY_NS_TOOL = {
+  name: 'list_objectstorage_user_summary_by_ns',
+  description: 'Summarize object storage user and bucket status in a namespace without returning access keys, secret keys, tokens, or connection strings.',
+  inputSchema: { type: 'object', properties: { namespace: { type: 'string' } }, required: ['namespace'] },
+};
+
+export const DescribeResourceSummaryByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+  kind: z.string().min(1, 'Kind is required'),
+  name: z.string().min(1, 'Name is required'),
+  apiVersion: z.string().optional(),
+});
+export type DescribeResourceSummaryByNsInput = z.infer<typeof DescribeResourceSummaryByNsInputSchema>;
+export const DESCRIBE_RESOURCE_SUMMARY_BY_NS_TOOL = {
+  name: 'describe_resource_summary_by_ns',
+  description: 'Describe a single allowed namespace-scoped resource by kind/name and return status, conditions, owner references, selected labels, and related events only. Never returns full manifests or Secret data.',
+  inputSchema: {
+    type: 'object',
+    properties: { namespace: { type: 'string' }, kind: { type: 'string' }, name: { type: 'string' }, apiVersion: { type: 'string' } },
+    required: ['namespace', 'kind', 'name'],
+  },
+};
+
+export const SearchKnowledgeInputSchema = z.object({
+  query: z.string().min(1, 'Query is required'),
+  limit: z.number().int().positive().max(10).optional(),
+});
+export type SearchKnowledgeInput = z.infer<typeof SearchKnowledgeInputSchema>;
+export const SEARCH_KNOWLEDGE_TOOL = {
+  name: 'search_knowledge',
+  description: 'Search mounted Sealos support knowledge markdown or text files. Use it for SOP, product behavior, and troubleshooting framework; do not treat it as live cluster evidence.',
+  inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] },
+};
+
+export const SearchSealosSourceInputSchema = z.object({
+  query: z.string().min(1, 'Query is required'),
+  limit: z.number().int().positive().max(10).optional(),
+  pathHint: z.string().optional(),
+});
+export type SearchSealosSourceInput = z.infer<typeof SearchSealosSourceInputSchema>;
+export const SEARCH_SEALOS_SOURCE_TOOL = {
+  name: 'search_sealos_source',
+  description: 'Search mounted Sealos source code text snippets for platform behavior confirmation. It is not live cluster evidence and must not read secret-like files.',
+  inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' }, pathHint: { type: 'string' } }, required: ['query'] },
+};

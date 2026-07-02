@@ -313,3 +313,135 @@ export interface GetLogsResponse {
   error?: KubernetesError;
   success: boolean;
 }
+
+export interface ConditionSummary {
+  type?: string;
+  status?: string;
+  reason?: string;
+  message?: string;
+  lastTransitionTime?: string;
+}
+
+export interface ServiceSummary {
+  name: string;
+  namespace: string;
+  type: string;
+  clusterIP: string;
+  externalIPs: string[];
+  ports: string[];
+  selector: Record<string, string>;
+  readyEndpoints: number;
+  notReadyEndpoints: number;
+  age?: string;
+}
+
+export interface ListServicesResponse {
+  namespace: string;
+  services: ServiceSummary[];
+  total: number;
+  error?: KubernetesError;
+  success: boolean;
+}
+
+export interface JobSummary {
+  name: string;
+  namespace: string;
+  completions: string;
+  succeeded: number;
+  failed: number;
+  active: number;
+  startTime?: string;
+  completionTime?: string;
+  age?: string;
+  conditions: ConditionSummary[];
+}
+
+export interface ListJobsResponse {
+  namespace: string;
+  jobs: JobSummary[];
+  total: number;
+  error?: KubernetesError;
+  success: boolean;
+}
+
+export interface CrdResourceSummary {
+  name: string;
+  namespace: string;
+  apiVersion?: string;
+  kind?: string;
+  status?: string;
+  phase?: string;
+  type?: string;
+  target?: string;
+  age?: string;
+  conditions: ConditionSummary[];
+}
+
+export interface ListOpsRequestsResponse {
+  namespace: string;
+  opsrequests: CrdResourceSummary[];
+  total: number;
+  sourceApi?: string;
+  error?: KubernetesError;
+  success: boolean;
+}
+
+export interface ListBackupsResponse {
+  namespace: string;
+  backups: CrdResourceSummary[];
+  total: number;
+  sourceApi?: string;
+  error?: KubernetesError;
+  success: boolean;
+}
+
+export interface ListInstancesResponse {
+  namespace: string;
+  instances: CrdResourceSummary[];
+  total: number;
+  sourceApi?: string;
+  error?: KubernetesError;
+  success: boolean;
+}
+
+export interface ObjectStorageUserSummary {
+  name: string;
+  namespace: string;
+  bucketCount?: number;
+  buckets?: Array<{ name: string; policy?: string; size?: string; age?: string }>;
+  status?: string;
+  age?: string;
+}
+
+export interface ListObjectStorageUserSummaryResponse {
+  namespace: string;
+  users: ObjectStorageUserSummary[];
+  total: number;
+  error?: KubernetesError;
+  success: boolean;
+}
+
+export interface ResourceSummaryResponse {
+  namespace: string;
+  kind: string;
+  name: string;
+  summary?: Record<string, unknown>;
+  relatedEvents: EventInfo[];
+  error?: KubernetesError;
+  success: boolean;
+}
+
+export interface SearchResultMatch {
+  root: string;
+  path: string;
+  line?: number;
+  snippet: string;
+}
+
+export interface SearchToolResponse {
+  query: string;
+  matches: SearchResultMatch[];
+  total: number;
+  error?: KubernetesError;
+  success: boolean;
+}
