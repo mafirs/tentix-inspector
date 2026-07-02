@@ -179,13 +179,13 @@ const TOOL_DESCRIPTION_OVERRIDES = loadToolDescriptionOverrides([...AGENT_TOOL_N
 
 const routerDecisionSchema = z.object({
   action: z.enum(['tool', 'final', 'insufficient', 'none']),
-  selectedTool: z.enum(AGENT_TOOL_NAMES).optional(),
-  toolInput: z.record(z.unknown()).default({}),
-  finalAnswer: z.string().optional(),
-  customerReplyDraft: z.string().optional(),
-  missingEvidence: z.array(z.string()).default([]),
-  escalationAdvice: z.array(z.string()).default([]),
-  reason: z.string().optional(),
+  selectedTool: z.enum(AGENT_TOOL_NAMES).nullable(),
+  toolInput: z.object({}).passthrough(),
+  finalAnswer: z.string().nullable(),
+  customerReplyDraft: z.string().nullable(),
+  missingEvidence: z.array(z.string()),
+  escalationAdvice: z.array(z.string()),
+  reason: z.string().nullable(),
 });
 type RouterDecision = z.infer<typeof routerDecisionSchema>;
 type RouterStructuredResponse = {
@@ -414,17 +414,29 @@ async function decideNextAction(context: AgentRouterContext): Promise<AgentRoute
       throw new Error('[Router] AI selected tool action without selectedTool');
     }
 
+    const selectedTool = decision.selectedTool ?? undefined;
     const toolInput =
       decision.toolInput &&
       typeof decision.toolInput === 'object' &&
       !Array.isArray(decision.toolInput)
         ? decision.toolInput
         : {};
+    const missingEvidence = Array.isArray(decision.missingEvidence)
+      ? decision.missingEvidence
+      : [];
+    const escalationAdvice = Array.isArray(decision.escalationAdvice)
+      ? decision.escalationAdvice
+      : [];
 
     return {
       ...decision,
-      selectedTool: decision.selectedTool as AgentToolName | undefined,
-      toolInput
+      selectedTool: selectedTool as AgentToolName | undefined,
+      toolInput,
+      finalAnswer: decision.finalAnswer ?? undefined,
+      customerReplyDraft: decision.customerReplyDraft ?? undefined,
+      missingEvidence,
+      escalationAdvice,
+      reason: decision.reason ?? undefined,
     };
   }
 
