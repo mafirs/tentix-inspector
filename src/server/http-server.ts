@@ -2,6 +2,7 @@ import { randomUUID, timingSafeEqual } from 'crypto';
 import express, { NextFunction, Request, Response } from 'express';
 import * as fs from 'fs';
 import type { Server } from 'http';
+import * as path from 'path';
 import * as k8s from '@kubernetes/client-node';
 import { z } from 'zod';
 import { runCodexInspection } from './codex/runner';
@@ -18,6 +19,11 @@ const AIPROXY_BRIDGE_ENABLED = (process.env.AIPROXY_BRIDGE_ENABLED ?? 'true').tr
 const AIPROXY_BRIDGE_HOST = process.env.AIPROXY_BRIDGE_HOST ?? '127.0.0.1';
 const AIPROXY_BRIDGE_PORT = process.env.AIPROXY_BRIDGE_PORT ?? '18087';
 const INSPECTOR_API_KEY_HEADER = 'x-tentix-inspector-key';
+const SKILLS_RESPONSE_CAPTURE_ENABLED =
+  (process.env.SKILLS_RESPONSE_CAPTURE_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+const SKILLS_RESPONSE_CAPTURE_DIR = process.env.SKILLS_RESPONSE_CAPTURE_DIR?.trim()
+  ? path.resolve(process.cwd(), process.env.SKILLS_RESPONSE_CAPTURE_DIR.trim())
+  : path.join(process.cwd(), 'skills-response-captures');
 const DEFAULT_JSON_BODY_LIMIT = '256kb';
 const JSON_BODY_LIMIT = getJsonBodyLimit();
 const jsonBodyParser = express.json({ limit: JSON_BODY_LIMIT });
@@ -330,6 +336,54 @@ function sendInspectionBusyResponse(res: Response, zone: string, namespace: stri
   res.status(429).json({ error: 'too many concurrent inspection requests' });
 }
 
+function serializeJsonResponseBody(responseBody: unknown): string {
+  return JSON.stringify(responseBody) ?? '';
+}
+
+function sanitizeCaptureFilePart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'unknown';
+}
+
+async function captureSkillsResponseBody(
+  zone: string,
+  namespace: string,
+  status: number,
+  responseText: string
+): Promise<void> {
+  if (!SKILLS_RESPONSE_CAPTURE_ENABLED) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filename = [
+    timestamp,
+    sanitizeCaptureFilePart(zone),
+    sanitizeCaptureFilePart(namespace),
+    String(status),
+    randomUUID(),
+  ].join('_') + '.txt';
+  const filePath = path.join(SKILLS_RESPONSE_CAPTURE_DIR, filename);
+
+  try {
+    await fs.promises.mkdir(SKILLS_RESPONSE_CAPTURE_DIR, { recursive: true });
+    await fs.promises.writeFile(filePath, responseText, 'utf8');
+    console.error('[HTTP] /api/skills response captured:', {
+      zone,
+      namespace,
+      status,
+      filePath,
+      bytes: Buffer.byteLength(responseText, 'utf8'),
+    });
+  } catch (error) {
+    console.error('[HTTP] /api/skills response capture failed:', {
+      zone,
+      namespace,
+      status,
+      error: extractErrorText(error),
+    });
+  }
+}
+
 function createInspectionSlotRelease(): InspectionSlotRelease {
   let released = false;
 
@@ -603,13 +657,16 @@ app.post('/api/skills', authenticateInspectorRequest, jsonBodyParser, async (req
       const finalResult = finalState.finalResult ?? null;
 
       if (isRecord(finalResult) && finalResult.tool === 'none') {
+        await captureSkillsResponseBody(zone, namespace, 204, '');
         return res.status(204).end();
       }
 
       const status = getSkillsResponseStatus(finalResult);
       const responseBody = sanitizeFinalResult(finalResult, status);
+      const responseText = serializeJsonResponseBody(responseBody);
 
-      res.status(status).json(responseBody);
+      await captureSkillsResponseBody(zone, namespace, status, responseText);
+      res.status(status).type('application/json').send(responseText);
     } finally {
       releaseInspection();
     }

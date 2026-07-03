@@ -43,6 +43,7 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+skills-response-captures/
 AGENTS.md
 skills.md
 sealos
