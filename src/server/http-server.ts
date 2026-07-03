@@ -361,7 +361,7 @@ async function captureSkillsResponseBody(
     sanitizeCaptureFilePart(namespace),
     String(status),
     randomUUID(),
-  ].join('_') + '.txt';
+  ].join('_') + '.json';
   const filePath = path.join(SKILLS_RESPONSE_CAPTURE_DIR, filename);
 
   try {
