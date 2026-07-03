@@ -6,6 +6,13 @@ export interface KubectlListOptions {
   labelSelector?: string;
   fieldSelector?: string;
   limit?: number;
+  continueToken?: string;
+}
+
+export interface KubectlListAllResult {
+  items: unknown[];
+  pageCount: number;
+  remainingItemCount?: number;
 }
 
 export async function listKubectlResource(
@@ -14,9 +21,44 @@ export async function listKubectlResource(
   namespace: string,
   options: KubectlListOptions
 ): Promise<unknown[]> {
+  const page = await listKubectlResourcePage(client, resource, namespace, options);
+  return page.items;
+}
+
+export async function listAllKubectlResource(
+  client: KubernetesClient,
+  resource: KubectlResourceDefinition,
+  namespace: string,
+  options: KubectlListOptions
+): Promise<KubectlListAllResult> {
+  const items: unknown[] = [];
+  let continueToken: string | undefined;
+  let pageCount = 0;
+  let remainingItemCount: number | undefined;
+
+  do {
+    const page = await listKubectlResourcePage(client, resource, namespace, {
+      ...options,
+      continueToken,
+    });
+    items.push(...page.items);
+    pageCount += 1;
+    remainingItemCount = page.remainingItemCount;
+    continueToken = page.continueToken;
+  } while (continueToken);
+
+  return { items, pageCount, remainingItemCount };
+}
+
+async function listKubectlResourcePage(
+  client: KubernetesClient,
+  resource: KubectlResourceDefinition,
+  namespace: string,
+  options: KubectlListOptions
+): Promise<{ items: unknown[]; continueToken?: string; remainingItemCount?: number }> {
   if (resource.backend === 'core') {
     const response = await listCoreResource(client.getApiClient(), resource, namespace, options);
-    return getItems(response.body);
+    return getListPage(response.body);
   }
 
   const response = await client.getCustomObjectsApi().listNamespacedCustomObject(
@@ -26,12 +68,12 @@ export async function listKubectlResource(
     resource.plural,
     undefined,
     undefined,
-    undefined,
+    options.continueToken,
     options.fieldSelector,
     options.labelSelector,
     options.limit
   );
-  return getItems(response.body);
+  return getListPage(response.body);
 }
 
 export async function readKubectlResource(
@@ -78,25 +120,26 @@ function listCoreResource(
   const fieldSelector = options.fieldSelector;
   const labelSelector = options.labelSelector;
   const limit = options.limit;
+  const continueToken = options.continueToken;
   switch (resource.coreResource) {
     case 'pods':
-      return api.listNamespacedPod(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedPod(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     case 'services':
-      return api.listNamespacedService(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedService(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     case 'endpoints':
-      return api.listNamespacedEndpoints(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedEndpoints(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     case 'configmaps':
-      return api.listNamespacedConfigMap(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedConfigMap(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     case 'secrets':
-      return api.listNamespacedSecret(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedSecret(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     case 'persistentvolumeclaims':
-      return api.listNamespacedPersistentVolumeClaim(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedPersistentVolumeClaim(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     case 'serviceaccounts':
-      return api.listNamespacedServiceAccount(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedServiceAccount(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     case 'resourcequotas':
-      return api.listNamespacedResourceQuota(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedResourceQuota(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     case 'events':
-      return api.listNamespacedEvent(namespace, undefined, undefined, undefined, fieldSelector, labelSelector, limit);
+      return api.listNamespacedEvent(namespace, undefined, undefined, continueToken, fieldSelector, labelSelector, limit);
     default:
       throw new Error(`unsupported core resource: ${resource.resource}`);
   }
@@ -132,8 +175,16 @@ function readCoreResource(
   }
 }
 
-function getItems(body: unknown): unknown[] {
-  return typeof body === 'object' && body !== null && Array.isArray((body as { items?: unknown[] }).items)
-    ? (body as { items: unknown[] }).items
-    : [];
+function getListPage(body: unknown): { items: unknown[]; continueToken?: string; remainingItemCount?: number } {
+  const record = typeof body === 'object' && body !== null && !Array.isArray(body)
+    ? body as { items?: unknown[]; metadata?: { continue?: string; remainingItemCount?: number } }
+    : {};
+  const metadata = typeof record.metadata === 'object' && record.metadata !== null
+    ? record.metadata as { continue?: string; remainingItemCount?: number }
+    : {};
+  return {
+    items: Array.isArray(record.items) ? record.items : [],
+    continueToken: metadata.continue || undefined,
+    remainingItemCount: typeof metadata.remainingItemCount === 'number' ? metadata.remainingItemCount : undefined,
+  };
 }

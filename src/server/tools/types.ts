@@ -429,6 +429,28 @@ export const KUBECTL_LOGS_BY_NS_TOOL = {
   },
 };
 
+export const FindK8sResourcesByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+  query: z.string().min(1, 'Query is required').max(120),
+  resourceTypes: z.array(z.string().min(1).max(64)).max(20).optional(),
+  pageSize: z.number().int().positive().max(100).optional(),
+});
+export type FindK8sResourcesByNsInput = z.infer<typeof FindK8sResourcesByNsInputSchema>;
+export const FIND_K8S_RESOURCES_BY_NS_TOOL = {
+  name: 'find_k8s_resources_by_ns',
+  description: 'Find namespace resources by target text across supported Kubernetes and Sealos resources. Use this early when the ticket includes an app name, service name, domain, host, pod prefix, or other concrete target such as "xrouter". Returns matching resource names, searched resource coverage, failures, labels, owners, selectors, ingress hosts/backends, and readiness hints for follow-up kubectl_get_by_ns, kubectl_describe_by_ns, or kubectl_logs_by_ns. Secrets are not searched by default; specify resourceTypes=["secrets"] only when Secret metadata/key presence is directly relevant.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      namespace: { type: 'string' },
+      query: { type: 'string' },
+      resourceTypes: { type: 'array', items: { type: 'string' } },
+      pageSize: { type: 'number' },
+    },
+    required: ['namespace', 'query'],
+  },
+};
+
 export const ListSupportedK8sResourcesInputSchema = z.object({
   namespace: z.string().min(1, 'Namespace is required'),
 });

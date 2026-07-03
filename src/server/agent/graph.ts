@@ -197,8 +197,8 @@ type RouterMessageContentItem =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } };
 
-const MODEL_OBSERVATION_ENTRIES = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_ENTRIES, 8, 30);
-const MODEL_OBSERVATION_CHARS = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_CHARS, 16_000, 80_000);
+const MODEL_OBSERVATION_ENTRIES = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_ENTRIES, 10, 30);
+const MODEL_OBSERVATION_CHARS = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_CHARS, 32_000, 120_000);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -395,12 +395,18 @@ Investigation Rules:
 - Use Ticket Title, Ticket Description, Ticket Module, Ticket Category, History Messages, and Latest Message together as one routing context. Do not rely on Latest Message alone.
 - Every turn receives accumulated evidence, selected model-visible observations, and trace. Choose the next action based on what is still missing.
 - Treat Model-Visible Observations as the concrete tool output available for current reasoning. Do not ask for the same tool/input again when an observation already contains the needed names, status, selectors, events, or logs.
+- If the ticket includes a concrete app/resource/domain/host/pod-prefix target such as "xrouter", prefer find_k8s_resources_by_ns early to locate matching Services, Ingresses, workloads, Pods, App CRDs, ConfigMaps, PVCs, Certificates, or Issuers before broad list/get sweeps.
+- find_k8s_resources_by_ns does not search Secrets by default. Use resourceTypes=["secrets"] only when Secret metadata/key presence is directly relevant; never ask for Secret values.
+- When find_k8s_resources_by_ns returns coverageStatus=partial, errors, or unsupportedResourceTypes, do not treat total=0 as proof that the target does not exist.
+- When an observation contains an Index section, treat it as the visible candidate set for that tool result. Use exact name, labelSelector, kubectl_describe_by_ns, kubectl_logs_by_ns, or find_k8s_resources_by_ns for drilldown instead of repeating a broad list/get.
+- When a list/get observation says details were omitted or truncated, do not infer absence from missing detail rows. Narrow by target name, selector, or find_k8s_resources_by_ns.
 - Choose action "tool" when one more allowed read-only tool can add useful evidence.
 - Choose action "final" when the current namespace evidence is enough to answer.
 - Choose action "insufficient" when the issue likely needs platform-side, cross-namespace, Secret, shell, or unavailable evidence.
 - Select "none" only when the current turn is clearly just a greeting, thanks, acknowledgement, filler, or a pure conversational reply that does not require checking live cluster or namespace state.
 - Never request shell, raw kubeconfig, -A, platform namespace, system namespace, cluster-scoped resources, Secret data, connection strings, object storage access keys, or write operations.
 - Treat kubectl_get_by_ns, kubectl_describe_by_ns, and kubectl_logs_by_ns as the primary live namespace inspection tools for supported resources.
+- Use find_k8s_resources_by_ns as the primary live target-locating tool when the user provides a likely resource name, app name, domain, service name, or pod prefix.
 - Use list_supported_k8s_resources when you are unsure which resource name, alias, or apiVersion to use.
 - Use kubectl_get_by_ns for resource discovery, name lookup, labelSelector lookup, and raw-like sanitized manifest evidence.
 - Use kubectl_describe_by_ns only after a target resource name is known.
@@ -438,6 +444,9 @@ Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"finalA
 User: 公网域名无法访问
 Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"external access should inspect ingress first"}
 
+User: xrouter应用无法访问，显示 Node is not ready
+Return: {"action":"tool","selectedTool":"find_k8s_resources_by_ns","toolInput":{"query":"xrouter"},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"the ticket includes a concrete App Launchpad target name and needs resource locating before drilldown"}
+
 User: 如何查看应用的对外ip？
 Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"external IP is exposed by ingress state"}
 
@@ -467,6 +476,7 @@ Note:
 - finalAnswer, customerReplyDraft, and reason must be strings or null.
 - missingEvidence and escalationAdvice must always be arrays of strings. Use [] when empty.
 - Do not add namespace into toolInput. The server injects trusted namespace.
+- For find_k8s_resources_by_ns, provide query. Use resourceTypes only when you already know the target class; omit it for the default resource set. Secrets require explicit resourceTypes=["secrets"].
 - For kubectl_get_by_ns, provide resource plus optional name, apiVersion, labelSelector, fieldSelector, and limit.
 - For kubectl_describe_by_ns, provide resource and name only when evidence already identifies a target resource.
 - For kubectl_logs_by_ns, provide podName or labelSelector. Provide container when the target pod has multiple containers unless allContainers is intended.

@@ -1,7 +1,9 @@
 type RecordValue = Record<string, unknown>;
 
 const MAX_ROWS = 20;
-const MAX_OBSERVATION_CHARS = 6_000;
+const MAX_INDEX_ROWS = 120;
+const MAX_DETAIL_ROWS = 8;
+const MAX_OBSERVATION_CHARS = 12_000;
 const MAX_LOG_CHARS = 2_000;
 const MAX_TEXT_CHARS = 2_000;
 const SENSITIVE_TEXT_PATTERN =
@@ -35,16 +37,25 @@ export function renderToolObservation(toolName: string, result: unknown): string
     lines.push(`message=${message}`);
   }
 
+  const coverageStatus = toText(record.coverageStatus);
+  if (coverageStatus) {
+    lines.push(`coverageStatus=${coverageStatus}`);
+  }
+
   appendCollection(lines, 'matches', record.matches, renderTextMatchRow);
   appendCollection(lines, 'files', record.files, renderTextFileRow);
-  appendCollection(lines, 'pods', record.pods, renderPodRow);
-  appendCollection(lines, 'services', record.services, renderServiceRow);
-  appendCollection(lines, 'ingresses', record.ingresses, renderIngressRow);
-  appendCollection(lines, 'apps', record.apps, renderWorkloadRow);
-  appendCollection(lines, 'deployments', record.deployments, renderWorkloadRow);
-  appendCollection(lines, 'statefulsets', record.statefulsets, renderWorkloadRow);
+  appendCollection(lines, 'searchedResources', record.searchedResources, renderSearchedResourceRow);
+  appendCollection(lines, 'unsupportedResourceTypes', record.unsupportedResourceTypes, renderPrimitiveRow);
+  appendCollection(lines, 'errors', record.errors, renderResourceErrorRow);
+  appendCollection(lines, 'resourceMatches', record.resourceMatches, renderResourceMatchRow);
+  appendIndexedCollection(lines, 'pods', record.pods, renderPodIndexRow, renderPodRow);
+  appendIndexedCollection(lines, 'services', record.services, renderServiceIndexRow, renderServiceRow);
+  appendIndexedCollection(lines, 'ingresses', record.ingresses, renderIngressIndexRow, renderIngressRow);
+  appendIndexedCollection(lines, 'apps', record.apps, renderWorkloadIndexRow, renderWorkloadRow);
+  appendIndexedCollection(lines, 'deployments', record.deployments, renderWorkloadIndexRow, renderWorkloadRow);
+  appendIndexedCollection(lines, 'statefulsets', record.statefulsets, renderWorkloadIndexRow, renderWorkloadRow);
   appendCollection(lines, 'events', record.events, renderEventRow);
-  appendCollection(lines, 'items', record.items, renderKubernetesObjectRow);
+  appendIndexedCollection(lines, 'items', record.items, renderKubernetesObjectIndexRow, renderKubernetesObjectRow);
   appendCollection(lines, 'relatedEvents', record.relatedEvents, renderEventRow);
   appendCollection(lines, 'sources', record.sources, renderLogSourceRow);
   appendCollection(lines, 'podCandidates', record.podCandidates, renderPodCandidateRow);
@@ -91,6 +102,49 @@ function appendCollection(
   }
 }
 
+function appendIndexedCollection(
+  lines: string[],
+  label: string,
+  value: unknown,
+  renderIndex: (item: unknown) => string,
+  renderDetail: (item: unknown) => string
+): void {
+  const items = asArray(value);
+  if (items.length === 0) {
+    return;
+  }
+
+  lines.push(`${label}Index total=${items.length}:`);
+  for (const item of items.slice(0, MAX_INDEX_ROWS)) {
+    lines.push(`- ${renderIndex(item)}`);
+  }
+  if (items.length > MAX_INDEX_ROWS) {
+    lines.push(`- ... ${items.length - MAX_INDEX_ROWS} more not indexed`);
+  }
+
+  const detailRows = items.slice(0, MAX_DETAIL_ROWS);
+  lines.push(`${label}Details shown=${detailRows.length} total=${items.length}:`);
+  for (const item of detailRows) {
+    lines.push(`- ${renderDetail(item)}`);
+  }
+  if (items.length > MAX_DETAIL_ROWS) {
+    lines.push(`- ... ${items.length - MAX_DETAIL_ROWS} more details omitted; use exact name, labelSelector, kubectl_describe_by_ns, or find_k8s_resources_by_ns for drilldown`);
+  }
+}
+
+function renderPodIndexRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  return joinParts([
+    named('name', record.name),
+    named('status', record.status),
+    named('node', record.node),
+  ]);
+}
+
 function renderPodRow(value: unknown): string {
   const record = asRecord(value);
   if (!record) {
@@ -102,6 +156,21 @@ function renderPodRow(value: unknown): string {
     named('status', record.status),
     named('ip', record.ip),
     named('node', record.node),
+  ]);
+}
+
+function renderServiceIndexRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  return joinParts([
+    named('name', record.name),
+    named('type', record.type),
+    named('ports', formatArray(record.ports)),
+    named('endpoints', formatEndpointReady(record.readyEndpoints, record.notReadyEndpoints)),
+    named('selector', formatMap(record.selector, 4)),
   ]);
 }
 
@@ -123,6 +192,20 @@ function renderServiceRow(value: unknown): string {
   ]);
 }
 
+function renderIngressIndexRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  return joinParts([
+    named('name', record.name),
+    named('hosts', record.hosts),
+    named('backend', formatBackend(record.backendService, record.backendPort)),
+    named('class', record.ingressClass),
+  ]);
+}
+
 function renderIngressRow(value: unknown): string {
   const record = asRecord(value);
   if (!record) {
@@ -137,6 +220,21 @@ function renderIngressRow(value: unknown): string {
     named('class', record.ingressClass),
     named('address', record.address),
     named('age', record.age),
+  ]);
+}
+
+function renderWorkloadIndexRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  return joinParts([
+    named('kind', record.kind),
+    named('name', record.name),
+    named('ready', record.ready),
+    named('selector', record.selector),
+    named('paused', record.paused),
   ]);
 }
 
@@ -157,6 +255,62 @@ function renderWorkloadRow(value: unknown): string {
     named('selector', record.selector),
     named('paused', record.paused),
     named('age', record.age),
+  ]);
+}
+
+function renderResourceMatchRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  const summary = asRecord(record.summary);
+  return joinParts([
+    named('resource', record.resource),
+    named('kind', record.kind),
+    named('name', record.name),
+    named('namespace', record.namespace),
+    named('score', record.score),
+    named('matchedFields', formatArray(record.matchedFields)),
+    named('owners', summary?.owners),
+    named('labels', formatMap(summary?.labels, 6)),
+    named('hosts', formatArray(summary?.hosts)),
+    named('backends', formatArray(summary?.backends)),
+    named('selector', formatMap(summary?.selector, 6)),
+    named('ready', summary?.ready),
+    named('phase', summary?.phase),
+    named('conditions', summary?.conditions),
+  ]);
+}
+
+function renderSearchedResourceRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  return joinParts([
+    named('resource', record.resource),
+    named('apiVersion', record.apiVersion),
+    named('searched', record.searched),
+    named('pages', record.pages),
+    named('remainingItemCount', record.remainingItemCount),
+  ]);
+}
+
+function renderResourceErrorRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  const error = asRecord(record.error);
+  return joinParts([
+    named('resource', record.resource),
+    named('apiVersion', record.apiVersion),
+    named('code', error?.code),
+    named('reason', error?.reason),
+    named('message', error?.message),
   ]);
 }
 
@@ -234,6 +388,30 @@ function renderPodCandidateRow(value: unknown): string {
     named('restarts', record.restarts),
     named('containers', formatArray(record.containers)),
     named('age', record.age),
+  ]);
+}
+
+function renderKubernetesObjectIndexRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  const metadata = asRecord(record.metadata);
+  const spec = asRecord(record.spec);
+  const status = asRecord(record.status);
+  return joinParts([
+    named('kind', record.kind),
+    named('name', metadata?.name),
+    named('namespace', metadata?.namespace),
+    named('phase', status?.phase),
+    summarizePodStatus(status),
+    summarizeService(spec),
+    summarizeIngress(spec),
+    summarizeWorkload(spec, status),
+    named('owners', summarizeOwners(metadata?.ownerReferences)),
+    named('labels', formatMap(metadata?.labels, 4)),
+    named('conditions', summarizeConditions(status?.conditions)),
   ]);
 }
 
@@ -413,6 +591,13 @@ function formatBackend(service: unknown, port: unknown): string {
     return '';
   }
   return portText ? `${serviceText}:${portText}` : serviceText;
+}
+
+function formatEndpointReady(ready: unknown, notReady: unknown): string {
+  return joinParts([
+    named('ready', ready),
+    named('notReady', notReady),
+  ], ',');
 }
 
 function formatArray(value: unknown): string {
