@@ -40,7 +40,7 @@ ARG CODEX_VERSION=0.141.0
 ARG KUBECTL_VERSION=v1.30.0
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates curl tini \
+  && apt-get install -y --no-install-recommends bash ca-certificates curl ripgrep tini \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g @openai/codex@${CODEX_VERSION} \
   && mkdir -p /home/node/.local/share/tentix-codex/internal \

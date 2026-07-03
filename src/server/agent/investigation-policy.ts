@@ -1,4 +1,4 @@
-import { SEARCH_KNOWLEDGE_TOOL, SEARCH_SEALOS_SOURCE_TOOL } from '../tools/types';
+import { SEARCH_TEXT_TOOL } from '../tools/types';
 import type { AgentEvidenceEntry, AgentRouterDecision, AgentTicketContext } from './session-types';
 
 const SEARCH_LIMIT = parseBoundedNumber(process.env.AGENT_POLICY_SEARCH_LIMIT, 5, 10);
@@ -18,15 +18,15 @@ export function getInvestigationPolicyDecision(params: {
     return undefined;
   }
 
-  const knowledgeEvidence = findEvidence(params.evidence, SEARCH_KNOWLEDGE_TOOL.name);
-  const sourceEvidence = findEvidence(params.evidence, SEARCH_SEALOS_SOURCE_TOOL.name);
+  const knowledgeEvidence = findEvidence(params.evidence, 'knowledge');
+  const sourceEvidence = findEvidence(params.evidence, 'source');
   const query = buildPolicySearchQuery(params.ticket);
 
   if (!knowledgeEvidence) {
     return {
       action: 'tool',
-      selectedTool: SEARCH_KNOWLEDGE_TOOL.name,
-      toolInput: { query, limit: SEARCH_LIMIT },
+      selectedTool: SEARCH_TEXT_TOOL.name,
+      toolInput: { rootType: 'knowledge', query, limit: SEARCH_LIMIT },
       reason: 'policy: search support knowledge before live diagnosis',
     };
   }
@@ -34,8 +34,8 @@ export function getInvestigationPolicyDecision(params: {
   if (!sourceEvidence && shouldSearchSource(params.ticket, knowledgeEvidence)) {
     return {
       action: 'tool',
-      selectedTool: SEARCH_SEALOS_SOURCE_TOOL.name,
-      toolInput: { query, limit: SEARCH_LIMIT },
+      selectedTool: SEARCH_TEXT_TOOL.name,
+      toolInput: { rootType: 'source', query, limit: SEARCH_LIMIT },
       reason: 'policy: search Sealos source for platform behavior or knowledge fallback',
     };
   }
@@ -45,8 +45,8 @@ export function getInvestigationPolicyDecision(params: {
 
 export function getInvestigationPolicyMissingEvidence(evidence: AgentEvidenceEntry[]): string[] {
   const missing: string[] = [];
-  const knowledgeEvidence = findEvidence(evidence, SEARCH_KNOWLEDGE_TOOL.name);
-  const sourceEvidence = findEvidence(evidence, SEARCH_SEALOS_SOURCE_TOOL.name);
+  const knowledgeEvidence = findEvidence(evidence, 'knowledge');
+  const sourceEvidence = findEvidence(evidence, 'source');
 
   if (knowledgeEvidence && (isUnavailable(knowledgeEvidence) || isNoMatch(knowledgeEvidence))) {
     missing.push(`Knowledge search did not provide usable context: ${knowledgeEvidence.summary}`);
@@ -73,8 +73,8 @@ function shouldSearchSource(ticket: AgentTicketContext, knowledgeEvidence: Agent
   return SOURCE_TRIGGER_PATTERN.test(collectTicketText(ticket)) || isUnavailable(knowledgeEvidence);
 }
 
-function findEvidence(evidence: AgentEvidenceEntry[], toolName: string): AgentEvidenceEntry | undefined {
-  return evidence.find((item) => item.tool === toolName || item.source === toolName);
+function findEvidence(evidence: AgentEvidenceEntry[], sourceType: 'knowledge' | 'source'): AgentEvidenceEntry | undefined {
+  return evidence.find((item) => item.sourceType === sourceType);
 }
 
 function isUnavailable(evidence: AgentEvidenceEntry): boolean {

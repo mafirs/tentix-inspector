@@ -23,8 +23,9 @@ import {
   LIST_INSTANCES_BY_NS_TOOL,
   LIST_OBJECTSTORAGE_USER_SUMMARY_BY_NS_TOOL,
   DESCRIBE_RESOURCE_SUMMARY_BY_NS_TOOL,
-  SEARCH_KNOWLEDGE_TOOL,
-  SEARCH_SEALOS_SOURCE_TOOL,
+  SEARCH_TEXT_TOOL,
+  READ_TEXT_SLICE_TOOL,
+  LIST_TEXT_FILES_TOOL,
 } from '../tools/types';
 import { listPodsByNamespace } from '../tools/list-pods-by-ns';
 import { listDevboxByNamespace } from '../tools/list-devbox-by-ns';
@@ -49,12 +50,11 @@ import { listBackupsByNamespace } from '../tools/list-backups-by-ns';
 import { listInstancesByNamespace } from '../tools/list-instances-by-ns';
 import { listObjectStorageUserSummaryByNamespace } from '../tools/list-objectstorage-user-summary-by-ns';
 import { describeResourceSummaryByNamespace } from '../tools/describe-resource-summary-by-ns';
-import { searchKnowledge } from '../tools/search-knowledge';
-import { searchSealosSource } from '../tools/search-sealos-source';
+import { searchText, readTextSlice, listTextFiles } from '../tools/text-file-tools';
 
 export type AgentToolSafety = 'read_only';
-export type AgentToolScope = 'namespace' | 'session' | 'knowledge' | 'source';
-export type AgentToolCategory = 'kubernetes' | 'sealos_crd' | 'knowledge' | 'source' | 'session';
+export type AgentToolScope = 'namespace' | 'session' | 'local_file';
+export type AgentToolCategory = 'kubernetes' | 'sealos_crd' | 'session' | 'local_file';
 
 export interface AgentToolRunParams {
   client: KubernetesClient;
@@ -106,24 +106,34 @@ const registry = [
     run: async () => returnNoneResult(),
   },
   {
-    name: SEARCH_KNOWLEDGE_TOOL.name,
-    description: SEARCH_KNOWLEDGE_TOOL.description,
-    category: 'knowledge',
+    name: SEARCH_TEXT_TOOL.name,
+    description: SEARCH_TEXT_TOOL.description,
+    category: 'local_file',
     safety: 'read_only',
-    scope: 'knowledge',
+    scope: 'local_file',
     enabledInV1: true,
     requiresNamespace: false,
-    run: async ({ input }) => searchKnowledge(input),
+    run: async ({ input }) => searchText(input),
   },
   {
-    name: SEARCH_SEALOS_SOURCE_TOOL.name,
-    description: SEARCH_SEALOS_SOURCE_TOOL.description,
-    category: 'source',
+    name: READ_TEXT_SLICE_TOOL.name,
+    description: READ_TEXT_SLICE_TOOL.description,
+    category: 'local_file',
     safety: 'read_only',
-    scope: 'source',
+    scope: 'local_file',
     enabledInV1: true,
     requiresNamespace: false,
-    run: async ({ input }) => searchSealosSource(input),
+    run: async ({ input }) => readTextSlice(input),
+  },
+  {
+    name: LIST_TEXT_FILES_TOOL.name,
+    description: LIST_TEXT_FILES_TOOL.description,
+    category: 'local_file',
+    safety: 'read_only',
+    scope: 'local_file',
+    enabledInV1: true,
+    requiresNamespace: false,
+    run: async ({ input }) => listTextFiles(input),
   },
 ] as const satisfies readonly AgentToolSpec[];
 

@@ -420,25 +420,75 @@ export const DESCRIBE_RESOURCE_SUMMARY_BY_NS_TOOL = {
   },
 };
 
-export const SearchKnowledgeInputSchema = z.object({
+export const TextRootTypeSchema = z.enum(['knowledge', 'source']);
+export type TextRootType = z.infer<typeof TextRootTypeSchema>;
+
+export const SearchTextInputSchema = z.object({
+  rootType: TextRootTypeSchema,
   query: z.string().min(1, 'Query is required'),
-  limit: z.number().int().positive().max(10).optional(),
+  limit: z.number().int().positive().max(20).optional(),
+  pathHint: z.string().optional(),
+  contextLines: z.number().int().min(0).max(8).optional(),
+  fileGlobs: z.array(z.string().min(1).max(120)).max(10).optional(),
 });
-export type SearchKnowledgeInput = z.infer<typeof SearchKnowledgeInputSchema>;
-export const SEARCH_KNOWLEDGE_TOOL = {
-  name: 'search_knowledge',
-  description: 'Search mounted Sealos support knowledge markdown or text files. Use it for SOP, product behavior, and troubleshooting framework; do not treat it as live cluster evidence.',
-  inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] },
+export type SearchTextInput = z.infer<typeof SearchTextInputSchema>;
+export const SEARCH_TEXT_TOOL = {
+  name: 'search_text',
+  description: 'Search mounted local text files under rootType=knowledge or rootType=source. Use this for targeted KB, playbook, document, or source-code keyword search before asking for more evidence. The server restricts roots, extensions, file size, and secret-like paths.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      rootType: { type: 'string', enum: ['knowledge', 'source'] },
+      query: { type: 'string' },
+      limit: { type: 'number' },
+      pathHint: { type: 'string' },
+      contextLines: { type: 'number' },
+      fileGlobs: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['rootType', 'query'],
+  },
 };
 
-export const SearchSealosSourceInputSchema = z.object({
-  query: z.string().min(1, 'Query is required'),
-  limit: z.number().int().positive().max(10).optional(),
-  pathHint: z.string().optional(),
+export const ReadTextSliceInputSchema = z.object({
+  rootType: TextRootTypeSchema,
+  path: z.string().min(1, 'Path is required'),
+  startLine: z.number().int().positive().optional(),
+  lineCount: z.number().int().positive().max(200).optional(),
 });
-export type SearchSealosSourceInput = z.infer<typeof SearchSealosSourceInputSchema>;
-export const SEARCH_SEALOS_SOURCE_TOOL = {
-  name: 'search_sealos_source',
-  description: 'Search mounted Sealos source code text snippets for platform behavior confirmation. It is not live cluster evidence and must not read secret-like files.',
-  inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' }, pathHint: { type: 'string' } }, required: ['query'] },
+export type ReadTextSliceInput = z.infer<typeof ReadTextSliceInputSchema>;
+export const READ_TEXT_SLICE_TOOL = {
+  name: 'read_text_slice',
+  description: 'Read a bounded line slice from a file previously found under rootType=knowledge or rootType=source. Use this after search_text or list_text_files identifies a useful path. The server enforces root containment, extension allowlist, file size, and max line count.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      rootType: { type: 'string', enum: ['knowledge', 'source'] },
+      path: { type: 'string' },
+      startLine: { type: 'number' },
+      lineCount: { type: 'number' },
+    },
+    required: ['rootType', 'path'],
+  },
+};
+
+export const ListTextFilesInputSchema = z.object({
+  rootType: TextRootTypeSchema,
+  pathHint: z.string().optional(),
+  extensions: z.array(z.string().regex(/^\.[A-Za-z0-9]+$/)).max(16).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+export type ListTextFilesInput = z.infer<typeof ListTextFilesInputSchema>;
+export const LIST_TEXT_FILES_TOOL = {
+  name: 'list_text_files',
+  description: 'List readable KB or source files under rootType=knowledge or rootType=source when the agent needs to discover available playbooks, docs, or likely source paths. It returns paths only and does not read file bodies.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      rootType: { type: 'string', enum: ['knowledge', 'source'] },
+      pathHint: { type: 'string' },
+      extensions: { type: 'array', items: { type: 'string' } },
+      limit: { type: 'number' },
+    },
+    required: ['rootType'],
+  },
 };

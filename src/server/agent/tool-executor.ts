@@ -1,6 +1,6 @@
 import { KubernetesClient } from '../kubernetes/client';
-import { GET_LOGS_BY_NS_TOOL, NONE_TOOL } from '../tools/types';
-import { AgentTicketContext, AgentEvidenceEntry } from './session-types';
+import { GET_LOGS_BY_NS_TOOL, LIST_TEXT_FILES_TOOL, NONE_TOOL, READ_TEXT_SLICE_TOOL, SEARCH_TEXT_TOOL } from '../tools/types';
+import { AgentTicketContext, AgentEvidenceEntry, AgentEvidenceSourceType } from './session-types';
 import { getAgentTool } from './tool-registry';
 import {
   AgentToolResult,
@@ -102,11 +102,7 @@ function buildOutput(
   return {
     result,
     evidence: {
-      sourceType: params.toolName.startsWith('search_knowledge')
-        ? 'knowledge'
-        : params.toolName.startsWith('search_sealos_source')
-          ? 'source'
-          : 'tool',
+      sourceType: getEvidenceSourceType(params.toolName, input),
       source: params.toolName,
       summary: result.summary,
       detailsPreview: preview,
@@ -116,4 +112,11 @@ function buildOutput(
     },
     normalizedInputSummary: stringifyForPreview(input),
   };
+}
+
+function getEvidenceSourceType(toolName: string, input: Record<string, unknown>): AgentEvidenceSourceType {
+  if ([SEARCH_TEXT_TOOL.name, READ_TEXT_SLICE_TOOL.name, LIST_TEXT_FILES_TOOL.name].includes(toolName)) {
+    return input.rootType === 'knowledge' || input.rootType === 'source' ? input.rootType : 'tool';
+  }
+  return 'tool';
 }
