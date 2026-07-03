@@ -343,6 +343,102 @@ export const GET_LOGS_BY_NS_TOOL = {
   },
 };
 
+export const KubectlGetByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+  resource: z.string().min(1, 'Resource is required'),
+  name: z.string().min(1).optional(),
+  apiVersion: z.string().min(1).optional(),
+  labelSelector: z.string().min(1).max(512).optional(),
+  fieldSelector: z.string().min(1).max(512).optional(),
+  limit: z.number().int().positive().max(100).optional(),
+});
+export type KubectlGetByNsInput = z.infer<typeof KubectlGetByNsInputSchema>;
+export const KUBECTL_GET_BY_NS_TOOL = {
+  name: 'kubectl_get_by_ns',
+  description: 'Controlled kubectl get for supported namespace-scoped resources. Use resource plus optional name, apiVersion, labelSelector, fieldSelector, and limit. Returns raw-like sanitized manifests: Secret values are never returned, ConfigMap values are not returned, and sensitive fields are redacted.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      namespace: { type: 'string' },
+      resource: { type: 'string' },
+      name: { type: 'string' },
+      apiVersion: { type: 'string' },
+      labelSelector: { type: 'string' },
+      fieldSelector: { type: 'string' },
+      limit: { type: 'number' },
+    },
+    required: ['namespace', 'resource'],
+  },
+};
+
+export const KubectlDescribeByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+  resource: z.string().min(1, 'Resource is required'),
+  name: z.string().min(1, 'Name is required'),
+  apiVersion: z.string().min(1).optional(),
+});
+export type KubectlDescribeByNsInput = z.infer<typeof KubectlDescribeByNsInputSchema>;
+export const KUBECTL_DESCRIBE_BY_NS_TOOL = {
+  name: 'kubectl_describe_by_ns',
+  description: 'Controlled kubectl describe for one supported namespace-scoped resource by resource/name. Returns a sanitized manifest and related events. Use this after kubectl_get_by_ns identifies the target.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      namespace: { type: 'string' },
+      resource: { type: 'string' },
+      name: { type: 'string' },
+      apiVersion: { type: 'string' },
+    },
+    required: ['namespace', 'resource', 'name'],
+  },
+};
+
+export const KubectlLogsByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+  podName: z.string().min(1).optional(),
+  labelSelector: z.string().min(1).max(512).optional(),
+  container: z.string().min(1).optional(),
+  allContainers: z.boolean().optional(),
+  previous: z.boolean().optional(),
+  tailLines: z.number().int().positive().max(1000).optional(),
+  sinceSeconds: z.number().int().positive().max(86400).optional(),
+  limitBytes: z.number().int().positive().max(1048576).optional(),
+  timestamps: z.boolean().optional(),
+}).refine((input) => Boolean(input.podName || input.labelSelector), {
+  message: 'podName or labelSelector is required',
+});
+export type KubectlLogsByNsInput = z.infer<typeof KubectlLogsByNsInputSchema>;
+export const KUBECTL_LOGS_BY_NS_TOOL = {
+  name: 'kubectl_logs_by_ns',
+  description: 'Controlled kubectl logs for namespace pods. Use podName or labelSelector, with optional container, allContainers, previous, tailLines, sinceSeconds, limitBytes, and timestamps. Does not follow logs.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      namespace: { type: 'string' },
+      podName: { type: 'string' },
+      labelSelector: { type: 'string' },
+      container: { type: 'string' },
+      allContainers: { type: 'boolean' },
+      previous: { type: 'boolean' },
+      tailLines: { type: 'number' },
+      sinceSeconds: { type: 'number' },
+      limitBytes: { type: 'number' },
+      timestamps: { type: 'boolean' },
+    },
+    required: ['namespace'],
+  },
+};
+
+export const ListSupportedK8sResourcesInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+});
+export type ListSupportedK8sResourcesInput = z.infer<typeof ListSupportedK8sResourcesInputSchema>;
+export const LIST_SUPPORTED_K8S_RESOURCES_TOOL = {
+  name: 'list_supported_k8s_resources',
+  description: 'List resources supported by kubectl_get_by_ns and kubectl_describe_by_ns, including aliases, apiVersion, plural, category, and output redaction policy. Use this when selecting a resource name is uncertain.',
+  inputSchema: { type: 'object', properties: { namespace: { type: 'string' } }, required: ['namespace'] },
+};
+
 export const ListServicesByNsInputSchema = z.object({
   namespace: z.string().min(1, 'Namespace is required'),
 });
@@ -412,7 +508,7 @@ export const DescribeResourceSummaryByNsInputSchema = z.object({
 export type DescribeResourceSummaryByNsInput = z.infer<typeof DescribeResourceSummaryByNsInputSchema>;
 export const DESCRIBE_RESOURCE_SUMMARY_BY_NS_TOOL = {
   name: 'describe_resource_summary_by_ns',
-  description: 'Describe a single allowed namespace-scoped resource by kind/name and return status, conditions, owner references, selected labels, and related events only. Never returns full manifests or Secret data.',
+  description: 'Compatibility wrapper for kubectl_describe_by_ns using kind/name input. Prefer kubectl_describe_by_ns for new investigations.',
   inputSchema: {
     type: 'object',
     properties: { namespace: { type: 'string' }, kind: { type: 'string' }, name: { type: 'string' }, apiVersion: { type: 'string' } },

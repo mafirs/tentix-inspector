@@ -23,6 +23,10 @@ import {
   LIST_INSTANCES_BY_NS_TOOL,
   LIST_OBJECTSTORAGE_USER_SUMMARY_BY_NS_TOOL,
   DESCRIBE_RESOURCE_SUMMARY_BY_NS_TOOL,
+  KUBECTL_GET_BY_NS_TOOL,
+  KUBECTL_DESCRIBE_BY_NS_TOOL,
+  KUBECTL_LOGS_BY_NS_TOOL,
+  LIST_SUPPORTED_K8S_RESOURCES_TOOL,
   SEARCH_TEXT_TOOL,
   READ_TEXT_SLICE_TOOL,
   LIST_TEXT_FILES_TOOL,
@@ -50,6 +54,10 @@ import { listBackupsByNamespace } from '../tools/list-backups-by-ns';
 import { listInstancesByNamespace } from '../tools/list-instances-by-ns';
 import { listObjectStorageUserSummaryByNamespace } from '../tools/list-objectstorage-user-summary-by-ns';
 import { describeResourceSummaryByNamespace } from '../tools/describe-resource-summary-by-ns';
+import { kubectlGetByNamespace } from '../tools/kubectl-get-by-ns';
+import { kubectlDescribeByNamespace } from '../tools/kubectl-describe-by-ns';
+import { kubectlLogsByNamespace } from '../tools/kubectl-logs-by-ns';
+import { listSupportedK8sResources } from '../tools/list-supported-k8s-resources';
 import { searchText, readTextSlice, listTextFiles } from '../tools/text-file-tools';
 
 export type AgentToolSafety = 'read_only';
@@ -73,6 +81,10 @@ export interface AgentToolSpec {
 }
 
 const registry = [
+  namespaceTool(LIST_SUPPORTED_K8S_RESOURCES_TOOL, 'kubernetes', async (_client, input) => listSupportedK8sResources(input)),
+  namespaceTool(KUBECTL_GET_BY_NS_TOOL, 'kubernetes', kubectlGetByNamespace),
+  namespaceTool(KUBECTL_DESCRIBE_BY_NS_TOOL, 'kubernetes', kubectlDescribeByNamespace),
+  namespaceTool(KUBECTL_LOGS_BY_NS_TOOL, 'kubernetes', kubectlLogsByNamespace),
   namespaceTool(LIST_PODS_BY_NS_TOOL, 'kubernetes', listPodsByNamespace),
   namespaceTool(LIST_DEVBOX_BY_NS_TOOL, 'sealos_crd', listDevboxByNamespace),
   namespaceTool(LIST_CLUSTER_BY_NS_TOOL, 'sealos_crd', listClusterByNamespace),

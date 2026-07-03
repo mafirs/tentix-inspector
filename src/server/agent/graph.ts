@@ -337,6 +337,12 @@ Investigation Rules:
 - Choose action "insufficient" when the issue likely needs platform-side, cross-namespace, Secret, shell, or unavailable evidence.
 - Select "none" only when the current turn is clearly just a greeting, thanks, acknowledgement, filler, or a pure conversational reply that does not require checking live cluster or namespace state.
 - Never request shell, raw kubeconfig, -A, platform namespace, system namespace, cluster-scoped resources, Secret data, connection strings, object storage access keys, or write operations.
+- Treat kubectl_get_by_ns, kubectl_describe_by_ns, and kubectl_logs_by_ns as the primary live namespace inspection tools for supported resources.
+- Use list_supported_k8s_resources when you are unsure which resource name, alias, or apiVersion to use.
+- Use kubectl_get_by_ns for resource discovery, name lookup, labelSelector lookup, and raw-like sanitized manifest evidence.
+- Use kubectl_describe_by_ns only after a target resource name is known.
+- Use kubectl_logs_by_ns when podName or labelSelector is known. Use get_logs_by_ns only when the user asks for logs but the target pod is not yet known and automatic resolution is useful.
+- Never ask for ConfigMap values. The server only returns ConfigMap keys and sizes.
 - Knowledge and source search results are context, not live cluster state.
 - If evidence or missing evidence says knowledge or source search was unavailable or returned no matches, do not claim that KB/source context was successfully checked.
 - Use knowledge/source context for playbook or platform behavior only; current root cause still requires namespace evidence unless the ticket only asks product behavior.
@@ -350,7 +356,7 @@ Investigation Rules:
 - If the user specifically asks about certificate issuance, renewal, or secure certificate status after domain configuration, prefer "list_certificate_by_ns".
 - If the user mentions 欠费, 余额不足, 扣费, 充值后, 费用异常, suspend, release, 被释放, 停服, or post-recharge abnormality, prefer "list_debt_by_ns".
 - If the user mentions DevBox, devbox, VS Code, Cursor, Trae, SSH, remote connection, IDE connection, DevBox startup, restart, release, sharing, or DevBox availability, prefer "list_devbox_by_ns".
-- If the user explicitly asks for logs, stdout, stderr, stack trace, or runtime output, prefer "get_logs_by_ns".
+- If the user explicitly asks for logs, stdout, stderr, stack trace, or runtime output and a podName or labelSelector is known, prefer "kubectl_logs_by_ns"; otherwise use "get_logs_by_ns" or first identify the pod with "kubectl_get_by_ns".
 - When several tools look possible, choose the tool that is the best first live-state inspection for the user's current complaint. Do not choose "none" merely because the message is brief.
 
 Examples:
@@ -398,7 +404,10 @@ Note:
 - finalAnswer, customerReplyDraft, and reason must be strings or null.
 - missingEvidence and escalationAdvice must always be arrays of strings. Use [] when empty.
 - Do not add namespace into toolInput. The server injects trusted namespace.
-- For describe_resource_summary_by_ns, provide kind and name only when evidence already identifies a target resource.
+- For kubectl_get_by_ns, provide resource plus optional name, apiVersion, labelSelector, fieldSelector, and limit.
+- For kubectl_describe_by_ns, provide resource and name only when evidence already identifies a target resource.
+- For kubectl_logs_by_ns, provide podName or labelSelector. Provide container when the target pod has multiple containers unless allContainers is intended.
+- Do not add namespace into toolInput. The server injects trusted namespace.
 `;
 
 const structuredRouter = llm.withStructuredOutput(routerDecisionSchema, {
