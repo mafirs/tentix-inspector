@@ -40,6 +40,7 @@ export interface AgentTraceEntry {
   inputSummary?: string;
   resultStatus?: string;
   resultPreview?: string;
+  observation?: string;
   reason?: string;
   error?: string;
   elapsedMs?: number;
@@ -50,6 +51,7 @@ export interface AgentEvidenceEntry {
   source: string;
   summary: string;
   detailsPreview?: string;
+  observation?: string;
   tool?: string;
   turn?: number;
   truncated?: boolean;

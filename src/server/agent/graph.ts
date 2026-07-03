@@ -16,7 +16,7 @@ import {
   buildAgentToolsDescription,
 } from './tool-registry';
 import { runAgentSession } from './session';
-import type { AgentRouterContext, AgentRouterDecision, AgentTicketContext } from './session-types';
+import type { AgentEvidenceEntry, AgentRouterContext, AgentRouterDecision, AgentTicketContext } from './session-types';
 
 // --- A. 初始化 AI 模型 (Gemini) ---
 const AI_API_KEY = process.env.AI_API_KEY;
@@ -197,8 +197,67 @@ type RouterMessageContentItem =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } };
 
+const MODEL_OBSERVATION_ENTRIES = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_ENTRIES, 8, 30);
+const MODEL_OBSERVATION_CHARS = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_CHARS, 16_000, 80_000);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parsePositiveIntegerEnv(raw: string | undefined, fallback: number, max: number): number {
+  const value = Number(raw ?? fallback);
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.min(Math.trunc(value), max);
+}
+
+function buildModelObservationContext(evidence: AgentEvidenceEntry[]): string {
+  const candidates = evidence
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => Boolean(item.observation?.trim()));
+  if (candidates.length === 0) {
+    return '- none';
+  }
+
+  const recent = candidates.slice(-MODEL_OBSERVATION_ENTRIES);
+  const critical = candidates.filter(({ item }) => isCriticalObservation(item));
+  const seen = new Set<number>();
+  const selected = [...critical, ...recent]
+    .filter(({ index }) => {
+      if (seen.has(index)) {
+        return false;
+      }
+      seen.add(index);
+      return true;
+    })
+    .sort((a, b) => a.index - b.index);
+
+  const sections: string[] = [];
+  let remainingChars = MODEL_OBSERVATION_CHARS;
+  for (const { item, index } of selected) {
+    if (remainingChars <= 0) {
+      break;
+    }
+    const header = `${index + 1}. [${item.sourceType}] ${item.source}: ${item.summary}`;
+    const body = item.observation?.trim() ?? '';
+    const bodyBudget = remainingChars - header.length - 1;
+    if (bodyBudget <= 0) {
+      break;
+    }
+    const visibleBody = body.length > bodyBudget
+      ? `${body.slice(0, bodyBudget)}\n[observation truncated]`
+      : body;
+    sections.push(`${header}\n${visibleBody}`);
+    remainingChars -= header.length + visibleBody.length + 2;
+  }
+
+  return sections.length > 0 ? sections.join('\n\n') : '- none';
+}
+
+function isCriticalObservation(item: AgentEvidenceEntry): boolean {
+  const text = `${item.summary}\n${item.observation ?? ''}`.toLowerCase();
+  return /notfound|not found|status=no_data|status=error|404|failed|blocked/.test(text);
 }
 
 function getRouterErrorText(error: unknown): string {
@@ -291,6 +350,9 @@ function buildRouterUserContext(context: AgentRouterContext): string {
     Evidence Summary:
     ${context.evidence.map((item, index) => `${index + 1}. [${item.sourceType}] ${item.source}: ${item.summary}`).join('\n') || '- none'}
 
+    Model-Visible Observations:
+    ${buildModelObservationContext(context.evidence)}
+
     Last Tool Result:
     ${context.lastToolResultSummary || '- none'}
 
@@ -331,7 +393,8 @@ ${GENERATED_TOOLS_DESC}
 
 Investigation Rules:
 - Use Ticket Title, Ticket Description, Ticket Module, Ticket Category, History Messages, and Latest Message together as one routing context. Do not rely on Latest Message alone.
-- Every turn receives accumulated evidence and trace. Choose the next action based on what is still missing.
+- Every turn receives accumulated evidence, selected model-visible observations, and trace. Choose the next action based on what is still missing.
+- Treat Model-Visible Observations as the concrete tool output available for current reasoning. Do not ask for the same tool/input again when an observation already contains the needed names, status, selectors, events, or logs.
 - Choose action "tool" when one more allowed read-only tool can add useful evidence.
 - Choose action "final" when the current namespace evidence is enough to answer.
 - Choose action "insufficient" when the issue likely needs platform-side, cross-namespace, Secret, shell, or unavailable evidence.

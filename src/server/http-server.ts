@@ -277,6 +277,9 @@ function sanitizeTraceEntry(entry: unknown): unknown {
     resultPreview: typeof entry.resultPreview === 'string'
       ? sanitizeSensitiveText(entry.resultPreview)
       : entry.resultPreview,
+    observation: typeof entry.observation === 'string'
+      ? sanitizeSensitiveText(entry.observation)
+      : entry.observation,
   };
 }
 
@@ -289,6 +292,9 @@ function sanitizeEvidenceEntry(entry: unknown): unknown {
     detailsPreview: typeof entry.detailsPreview === 'string'
       ? sanitizeSensitiveText(entry.detailsPreview)
       : entry.detailsPreview,
+    observation: typeof entry.observation === 'string'
+      ? sanitizeSensitiveText(entry.observation)
+      : entry.observation,
   };
 }
 

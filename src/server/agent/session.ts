@@ -122,6 +122,7 @@ export async function runAgentSession(params: RunAgentSessionParams): Promise<Ag
       inputSummary: output.normalizedInputSummary,
       resultStatus: output.result.status,
       resultPreview: output.evidence.detailsPreview,
+      observation: output.evidence.observation,
       reason: decision.reason,
       error: output.result.error,
       elapsedMs: output.result.elapsedMs,

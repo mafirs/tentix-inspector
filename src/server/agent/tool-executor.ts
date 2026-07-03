@@ -1,4 +1,5 @@
 import { KubernetesClient } from '../kubernetes/client';
+import { renderToolObservation } from '../tools/tool-observation';
 import { GET_LOGS_BY_NS_TOOL, LIST_TEXT_FILES_TOOL, NONE_TOOL, READ_TEXT_SLICE_TOOL, SEARCH_TEXT_TOOL } from '../tools/types';
 import { AgentTicketContext, AgentEvidenceEntry, AgentEvidenceSourceType } from './session-types';
 import { getAgentTool } from './tool-registry';
@@ -44,9 +45,10 @@ export async function runAgentTool(params: RunAgentToolParams): Promise<RunAgent
 
   try {
     const rawResult = await tool.run({ client: params.client, input });
+    const observation = renderToolObservation(params.toolName, rawResult);
     const normalized = normalizeToolResult(rawResult, Date.now() - startedAt);
     const truncated = truncateToolResultForEvidence(normalized, params.resultPreviewChars);
-    return buildOutput(params, truncated, input);
+    return buildOutput(params, truncated, input, observation);
   } catch (error) {
     const result: AgentToolResult = {
       status: 'error',
@@ -96,7 +98,8 @@ function buildBlockedResult(toolName: string, startedAt: number): AgentToolResul
 function buildOutput(
   params: RunAgentToolParams,
   result: AgentToolResult,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  observation?: string
 ): RunAgentToolOutput {
   const preview = stringifyForPreview(result.data ?? result.error ?? result.summary);
   return {
@@ -106,6 +109,7 @@ function buildOutput(
       source: params.toolName,
       summary: result.summary,
       detailsPreview: preview,
+      observation,
       tool: params.toolName,
       turn: params.turn,
       truncated: result.truncated,
