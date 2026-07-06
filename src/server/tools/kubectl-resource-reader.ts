@@ -1,5 +1,6 @@
 import * as k8s from '@kubernetes/client-node';
 import { KubernetesClient } from '../kubernetes/client';
+import { EndpointProjection } from '../kubernetes/types';
 import { KubectlResourceDefinition } from './kubectl-resource-registry';
 
 export interface KubectlListOptions {
@@ -14,6 +15,8 @@ export interface KubectlListAllResult {
   pageCount: number;
   remainingItemCount?: number;
 }
+
+type RecordValue = Record<string, unknown>;
 
 export async function listKubectlResource(
   client: KubernetesClient,
@@ -111,6 +114,76 @@ export async function listRelatedEvents(
   return response.body.items.slice(0, 20);
 }
 
+export async function listServiceEndpointReadiness(
+  client: KubernetesClient,
+  namespace: string,
+  serviceNames: string[]
+): Promise<Map<string, EndpointProjection>> {
+  const uniqueServiceNames = Array.from(new Set(serviceNames.filter(Boolean)));
+  const result: Map<string, EndpointProjection> = new Map(uniqueServiceNames.map((serviceName) => [
+    serviceName,
+    { serviceName, ready: 0, notReady: 0, ports: [], source: 'none' },
+  ]));
+  if (uniqueServiceNames.length === 0) {
+    return result;
+  }
+
+  const [endpointsResult, endpointSlicesResult] = await Promise.allSettled([
+    client.getApiClient().listNamespacedEndpoints(namespace),
+    client.getCustomObjectsApi().listNamespacedCustomObject(
+      'discovery.k8s.io',
+      'v1',
+      namespace,
+      'endpointslices'
+    ),
+  ]);
+
+  if (endpointsResult.status === 'fulfilled') {
+    for (const endpoint of endpointsResult.value.body.items) {
+      const serviceName = endpoint.metadata?.name;
+      if (!serviceName || !result.has(serviceName)) {
+        continue;
+      }
+      const projection = result.get(serviceName);
+      if (!projection) {
+        continue;
+      }
+      const subsets = endpoint.subsets ?? [];
+      projection.ready += subsets.reduce((sum, subset) => sum + (subset.addresses?.length ?? 0), 0);
+      projection.notReady += subsets.reduce((sum, subset) => sum + (subset.notReadyAddresses?.length ?? 0), 0);
+      projection.ports.push(...subsets.flatMap((subset) => (subset.ports ?? []).map(formatEndpointPort)));
+      projection.source = 'endpoints';
+    }
+  }
+
+  if (endpointSlicesResult.status === 'fulfilled') {
+    const body = endpointSlicesResult.value.body;
+    const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
+    for (const item of items) {
+      const record = isRecord(item) ? item : {};
+      const metadata = isRecord(record.metadata) ? record.metadata : {};
+      const labels = isRecord(metadata.labels) ? metadata.labels : {};
+      const serviceName = typeof labels['kubernetes.io/service-name'] === 'string'
+        ? labels['kubernetes.io/service-name']
+        : '';
+      if (!serviceName || !result.has(serviceName)) {
+        continue;
+      }
+      const projection = result.get(serviceName);
+      if (!projection) {
+        continue;
+      }
+      const endpoints = Array.isArray(record.endpoints) ? record.endpoints.filter(isRecord) : [];
+      projection.ready += endpoints.filter((endpoint) => isEndpointSliceReady(endpoint)).length;
+      projection.notReady += endpoints.filter((endpoint) => !isEndpointSliceReady(endpoint)).length;
+      projection.ports.push(...(Array.isArray(record.ports) ? record.ports.filter(isRecord).map(formatEndpointSlicePort) : []));
+      projection.source = 'endpointslice';
+    }
+  }
+
+  return result;
+}
+
 function listCoreResource(
   api: k8s.CoreV1Api,
   resource: KubectlResourceDefinition,
@@ -187,4 +260,34 @@ function getListPage(body: unknown): { items: unknown[]; continueToken?: string;
     continueToken: metadata.continue || undefined,
     remainingItemCount: typeof metadata.remainingItemCount === 'number' ? metadata.remainingItemCount : undefined,
   };
+}
+
+function formatEndpointPort(port: k8s.CoreV1EndpointPort): string {
+  return [port.name, port.port, port.protocol].filter(Boolean).join('/');
+}
+
+function formatEndpointSlicePort(port: RecordValue): string {
+  return [port.name, port.port, port.protocol].map(toText).filter(Boolean).join('/');
+}
+
+function isEndpointSliceReady(endpoint: RecordValue): boolean {
+  const conditions = isRecord(endpoint.conditions) ? endpoint.conditions : {};
+  return conditions.ready !== false;
+}
+
+function toText(value: unknown): string {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return '';
+}
+
+function isRecord(value: unknown): value is RecordValue {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

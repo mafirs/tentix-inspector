@@ -1,11 +1,13 @@
 import * as k8s from '@kubernetes/client-node';
 import { KubernetesClient } from '../kubernetes/client';
+import { LogSourceResult } from '../kubernetes/types';
 import { extractKubernetesError } from './common';
 import { KubectlLogsByNsInput, KubectlLogsByNsInputSchema } from './types';
 import { sanitizeLogText } from './kubectl-sanitize';
 
 const DEFAULT_TAIL_LINES = 200;
 const MAX_LABEL_PODS = 5;
+const POD_QUERY_LIMIT = MAX_LABEL_PODS + 1;
 
 export async function kubectlLogsByNamespace(
   client: KubernetesClient,
@@ -31,7 +33,9 @@ export async function kubectlLogsByNamespace(
   try {
     const pods = podName
       ? [(await k8sApi.readNamespacedPod(podName, namespace)).body]
-      : (await k8sApi.listNamespacedPod(namespace, undefined, undefined, undefined, undefined, labelSelector, MAX_LABEL_PODS)).body.items;
+      : (await k8sApi.listNamespacedPod(namespace, undefined, undefined, undefined, undefined, labelSelector, POD_QUERY_LIMIT)).body.items;
+    const selectedPods = pods.slice(0, MAX_LABEL_PODS);
+    const omittedPods = pods.slice(MAX_LABEL_PODS).map((pod) => pod.metadata?.name).filter((name): name is string => Boolean(name));
 
     if (pods.length === 0) {
       return {
@@ -40,13 +44,21 @@ export async function kubectlLogsByNamespace(
         labelSelector,
         sources: [],
         total: 0,
+        coverage: {
+          matchedPods: 0,
+          queriedPods: 0,
+          omittedPods: [],
+          queriedSources: 0,
+          truncated: false,
+        },
+        resolution: 'no_match',
         success: true,
         message: 'No matching pods were found.',
       };
     }
 
-    const sources = [];
-    for (const pod of pods.slice(0, MAX_LABEL_PODS)) {
+    const sources: LogSourceResult[] = [];
+    for (const pod of selectedPods) {
       const selectedContainers = resolveContainers(pod, container, Boolean(allContainers));
       if (selectedContainers.type === 'ambiguous') {
         return {
@@ -55,6 +67,16 @@ export async function kubectlLogsByNamespace(
           labelSelector,
           resolution: 'ambiguous_container',
           containerCandidates: selectedContainers.containerCandidates,
+          sources: [],
+          total: 0,
+          coverage: {
+            matchedPods: pods.length,
+            queriedPods: 0,
+            omittedPods,
+            queriedSources: 0,
+            truncated: omittedPods.length > 0,
+            message: omittedPods.length > 0 ? 'Some matching pods were omitted from log query' : undefined,
+          },
           success: true,
         };
       }
@@ -72,11 +94,15 @@ export async function kubectlLogsByNamespace(
           tailLines,
           Boolean(timestamps)
         );
+        const logs = sanitizeLogText((response.body || '').trim());
         sources.push({
           podName: pod.metadata?.name ?? '',
           containerName,
           previous: Boolean(previous),
-          logs: sanitizeLogText((response.body || '').trim()),
+          logs,
+          lineCount: countLogLines(logs),
+          empty: logs.length === 0,
+          truncated: false,
         });
       }
     }
@@ -89,9 +115,18 @@ export async function kubectlLogsByNamespace(
       tailLines,
       sinceSeconds,
       timestamps: Boolean(timestamps),
+      limitBytes,
       sources,
       total: sources.length,
-      truncatedPods: pods.length > MAX_LABEL_PODS,
+      coverage: {
+        matchedPods: pods.length,
+        queriedPods: selectedPods.length,
+        omittedPods,
+        queriedSources: sources.length,
+        truncated: omittedPods.length > 0,
+        message: omittedPods.length > 0 ? 'Some matching pods were omitted from log query' : undefined,
+      },
+      resolution: 'resolved',
       success: true,
     };
   } catch (error) {
@@ -107,6 +142,13 @@ export async function kubectlLogsByNamespace(
       labelSelector,
       sources: [],
       total: 0,
+      coverage: {
+        matchedPods: 0,
+        queriedPods: 0,
+        omittedPods: [],
+        queriedSources: 0,
+        truncated: false,
+      },
       error: k8sError,
       success: false,
     };
@@ -122,15 +164,33 @@ function resolveContainers(
   requestedContainer: string | undefined,
   allContainers: boolean
 ): ContainerResolution {
-  const containerNames = [
-    ...(pod.spec?.initContainers ?? []).map((item) => item.name),
-    ...(pod.spec?.containers ?? []).map((item) => item.name),
-  ].filter((name): name is string => Boolean(name));
+  const regularContainerNames = (pod.spec?.containers ?? []).map((item) => item.name).filter((name): name is string => Boolean(name));
+  const initContainerNames = (pod.spec?.initContainers ?? []).map((item) => item.name).filter((name): name is string => Boolean(name));
   if (requestedContainer) {
     return { type: 'resolved', containerNames: [requestedContainer] };
   }
-  if (allContainers || containerNames.length <= 1) {
-    return { type: 'resolved', containerNames };
+  if (allContainers) {
+    return { type: 'resolved', containerNames: regularContainerNames };
   }
-  return { type: 'ambiguous', containerCandidates: containerNames };
+  if (regularContainerNames.length <= 1) {
+    return { type: 'resolved', containerNames: regularContainerNames };
+  }
+  const mainContainer = pickLikelyMainContainer(regularContainerNames, initContainerNames);
+  if (mainContainer) {
+    return { type: 'resolved', containerNames: [mainContainer] };
+  }
+  return { type: 'ambiguous', containerCandidates: regularContainerNames };
+}
+
+function pickLikelyMainContainer(regularContainerNames: string[], initContainerNames: string[]): string | undefined {
+  const ignored = /^(istio-proxy|linkerd-proxy|envoy|sidecar|metrics|exporter|prometheus|filebeat|fluent-bit)$/i;
+  const candidates = regularContainerNames.filter((name) => !ignored.test(name) && !initContainerNames.includes(name));
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+function countLogLines(value: string): number {
+  if (!value) {
+    return 0;
+  }
+  return value.split(/\r?\n/).length;
 }

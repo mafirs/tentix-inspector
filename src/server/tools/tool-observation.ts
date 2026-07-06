@@ -3,9 +3,9 @@ type RecordValue = Record<string, unknown>;
 const MAX_ROWS = 20;
 const MAX_INDEX_ROWS = 120;
 const MAX_DETAIL_ROWS = 8;
-const MAX_OBSERVATION_CHARS = 12_000;
-const MAX_LOG_CHARS = 2_000;
-const MAX_TEXT_CHARS = 2_000;
+const MAX_OBSERVATION_CHARS = parsePositiveIntegerEnv(process.env.AGENT_TOOL_OBSERVATION_CHARS, 48_000, 120_000);
+const MAX_LOG_CHARS = parsePositiveIntegerEnv(process.env.AGENT_TOOL_LOG_CHARS, 12_000, 80_000);
+const MAX_TEXT_CHARS = parsePositiveIntegerEnv(process.env.AGENT_TOOL_TEXT_CHARS, 8_000, 40_000);
 const SENSITIVE_TEXT_PATTERN =
   /(authorization|token|password|passwd|secret|secretKey|accessKey|secretHeader|connectionString|dsn|kubeconfig)\s*[:=]\s*[^,\s"}]+/gi;
 
@@ -41,6 +41,9 @@ export function renderToolObservation(toolName: string, result: unknown): string
   if (coverageStatus) {
     lines.push(`coverageStatus=${coverageStatus}`);
   }
+  appendCoverage(lines, record.coverage);
+  appendSummary(lines, record.summary);
+  appendDiagnosis(lines, record.diagnosis);
 
   appendCollection(lines, 'matches', record.matches, renderTextMatchRow);
   appendCollection(lines, 'files', record.files, renderTextFileRow);
@@ -57,6 +60,8 @@ export function renderToolObservation(toolName: string, result: unknown): string
   appendCollection(lines, 'events', record.events, renderEventRow);
   appendIndexedCollection(lines, 'items', record.items, renderKubernetesObjectIndexRow, renderKubernetesObjectRow);
   appendCollection(lines, 'relatedEvents', record.relatedEvents, renderEventRow);
+  appendCollection(lines, 'relatedResources', record.relatedResources, renderRelatedResourceBlockRow);
+  appendCollection(lines, 'omitted', record.omitted, renderOmittedRow);
   appendCollection(lines, 'sources', record.sources, renderLogSourceRow);
   appendCollection(lines, 'podCandidates', record.podCandidates, renderPodCandidateRow);
 
@@ -78,8 +83,59 @@ export function renderToolObservation(toolName: string, result: unknown): string
   if (total && lines.length <= 3) {
     lines.push(`total=${total}`);
   }
+  if (lines.length <= 2) {
+    lines.push(`keys=${Object.keys(record).slice(0, 20).join(',')}`);
+  }
 
   return finalizeObservation(lines);
+}
+
+function appendCoverage(lines: string[], value: unknown): void {
+  const record = asRecord(value);
+  if (!record) {
+    return;
+  }
+  lines.push(joinParts([
+    'coverage:',
+    named('status', record.status),
+    named('pages', record.pages),
+    named('returned', record.returned),
+    named('remainingItemCount', record.remainingItemCount),
+    named('matchedPods', record.matchedPods),
+    named('queriedPods', record.queriedPods),
+    named('queriedSources', record.queriedSources),
+    named('limit', record.limit),
+    named('truncated', record.truncated),
+    named('fieldSelector', record.fieldSelector),
+    named('message', record.message),
+  ]));
+  appendCollection(lines, 'omittedPods', record.omittedPods, renderPrimitiveRow);
+  appendCollection(lines, 'omittedSections', record.omittedSections, renderPrimitiveRow);
+}
+
+function appendSummary(lines: string[], value: unknown): void {
+  const record = asRecord(value);
+  if (!record) {
+    return;
+  }
+  lines.push('summary:');
+  lines.push(`- ${renderKubernetesObjectRow(record)}`);
+  appendCollection(lines, 'diagnosticSignals', record.diagnosticSignals, renderPrimitiveRow);
+}
+
+function appendDiagnosis(lines: string[], value: unknown): void {
+  const record = asRecord(value);
+  if (!record) {
+    return;
+  }
+  lines.push(joinParts([
+    'diagnosis:',
+    named('health', record.health),
+  ]));
+  appendCollection(lines, 'primarySignals', record.primarySignals, renderPrimitiveRow);
+  appendCollection(lines, 'failedConditions', record.failedConditions, renderConditionRow);
+  appendCollection(lines, 'nextChecks', record.nextChecks, renderPrimitiveRow);
+  appendCollection(lines, 'evidenceGaps', record.evidenceGaps, renderPrimitiveRow);
 }
 
 function appendCollection(
@@ -344,6 +400,10 @@ function renderLogSourceRow(value: unknown): string {
     named('pod', record.podName),
     named('container', record.containerName),
     named('previous', record.previous),
+    named('lineCount', record.lineCount),
+    named('empty', record.empty),
+    named('truncated', record.truncated),
+    named('error', formatError(record.error)),
     named('logs', logText),
   ]);
 }
@@ -398,6 +458,9 @@ function renderKubernetesObjectIndexRow(value: unknown): string {
   }
 
   const metadata = asRecord(record.metadata);
+  if (!metadata && (record.name || record.status || record.spec)) {
+    return renderResourceSummaryIndexRow(record);
+  }
   const spec = asRecord(record.spec);
   const status = asRecord(record.status);
   return joinParts([
@@ -422,6 +485,9 @@ function renderKubernetesObjectRow(value: unknown): string {
   }
 
   const metadata = asRecord(record.metadata);
+  if (!metadata && (record.name || record.status || record.spec)) {
+    return renderResourceSummaryRow(record);
+  }
   const spec = asRecord(record.spec);
   const status = asRecord(record.status);
   return joinParts([
@@ -437,6 +503,136 @@ function renderKubernetesObjectRow(value: unknown): string {
     named('labels', formatMap(metadata?.labels, 8)),
     named('conditions', summarizeConditions(status?.conditions)),
   ]);
+}
+
+function renderResourceSummaryIndexRow(record: RecordValue): string {
+  const status = asRecord(record.status);
+  const spec = asRecord(record.spec);
+  return joinParts([
+    named('kind', record.kind),
+    named('name', record.name),
+    named('namespace', record.namespace),
+    named('phase', status?.phase),
+    named('ready', status?.ready),
+    named('replicas', formatMap(status?.replicas, 6)),
+    named('endpoints', renderEndpoints(status?.endpoints)),
+    named('containers', renderContainers(status?.containers)),
+    named('hosts', formatArray(spec?.hosts)),
+    named('backends', renderRefs(spec?.backendServices)),
+    named('owners', renderRefs(record.owners)),
+    named('signals', formatArray(record.diagnosticSignals)),
+  ]);
+}
+
+function renderResourceSummaryRow(record: RecordValue): string {
+  const status = asRecord(record.status);
+  const spec = asRecord(record.spec);
+  return joinParts([
+    renderResourceSummaryIndexRow(record),
+    named('labels', formatMap(record.labels, 8)),
+    named('conditions', renderConditions(status?.conditions)),
+    named('endpoints', renderEndpoints(status?.endpoints)),
+    named('ports', formatArray(spec?.ports)),
+    named('images', formatArray(spec?.images)),
+    named('paths', formatArray(spec?.paths)),
+    named('tlsSecrets', renderRefs(spec?.tlsSecrets)),
+    named('refs', renderRefs(record.refs)),
+    named('age', record.age),
+  ]);
+}
+
+function renderConditionRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+  return joinParts([
+    named('type', record.type),
+    named('status', record.status),
+    named('reason', record.reason),
+    named('message', record.message),
+  ]);
+}
+
+function renderRelatedResourceBlockRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+  return joinParts([
+    named('role', record.role),
+    named('items', renderRefs(record.items)),
+    named('truncated', record.truncated),
+    named('error', formatError(record.error)),
+  ]);
+}
+
+function renderOmittedRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+  return joinParts([
+    named('path', record.path),
+    named('reason', record.reason),
+    named('count', record.count),
+  ]);
+}
+
+function renderRefs(value: unknown): string {
+  return asArray(value)
+    .filter(isRecord)
+    .slice(0, 12)
+    .map((ref) => joinParts([
+      toText(ref.role),
+      formatResourceRef(ref.kind, ref.name),
+    ], ':'))
+    .filter(Boolean)
+    .join(',');
+}
+
+function renderContainers(value: unknown): string {
+  return asArray(value)
+    .filter(isRecord)
+    .slice(0, 8)
+    .map((container) => joinParts([
+      toText(container.name),
+      named('ready', container.ready),
+      named('restarts', container.restartCount),
+      named('state', container.state),
+      named('reason', container.reason),
+    ], '/'))
+    .filter(Boolean)
+    .join(',');
+}
+
+function renderEndpoints(value: unknown): string {
+  return asArray(value)
+    .filter(isRecord)
+    .slice(0, 12)
+    .map((endpoint) => joinParts([
+      toText(endpoint.serviceName),
+      `ready=${toText(endpoint.ready) || '0'}`,
+      `notReady=${toText(endpoint.notReady) || '0'}`,
+      named('source', endpoint.source),
+      named('ports', formatArray(endpoint.ports)),
+      named('error', formatError(endpoint.error)),
+    ], '/'))
+    .filter(Boolean)
+    .join(',');
+}
+
+function renderConditions(value: unknown): string {
+  return asArray(value)
+    .filter(isRecord)
+    .slice(0, 8)
+    .map((condition) => joinParts([
+      toText(condition.type),
+      toText(condition.status),
+      toText(condition.reason),
+    ], '='))
+    .filter(Boolean)
+    .join(',');
 }
 
 function summarizePodStatus(status: RecordValue | undefined): string {
@@ -621,7 +817,7 @@ function formatMap(value: unknown, maxEntries = 8): string {
 }
 
 function renderPrimitiveRow(value: unknown): string {
-  return toText(value) || JSON.stringify(value);
+  return toText(value) || JSON.stringify(value) || '';
 }
 
 function appendTextBlock(lines: string[], label: string, value: unknown, maxChars: number): void {
@@ -676,4 +872,12 @@ function asRecord(value: unknown): RecordValue | undefined {
 
 function isRecord(value: unknown): value is RecordValue {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parsePositiveIntegerEnv(value: string | undefined, fallback: number, max: number): number {
+  const parsed = value ? Number(value) : fallback;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(Math.trunc(parsed), max);
 }

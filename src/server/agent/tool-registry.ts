@@ -26,6 +26,7 @@ import {
   KUBECTL_GET_BY_NS_TOOL,
   KUBECTL_DESCRIBE_BY_NS_TOOL,
   KUBECTL_LOGS_BY_NS_TOOL,
+  KUBECTL_EVENTS_BY_NS_TOOL,
   FIND_K8S_RESOURCES_BY_NS_TOOL,
   LIST_SUPPORTED_K8S_RESOURCES_TOOL,
   SEARCH_TEXT_TOOL,
@@ -58,6 +59,7 @@ import { describeResourceSummaryByNamespace } from '../tools/describe-resource-s
 import { kubectlGetByNamespace } from '../tools/kubectl-get-by-ns';
 import { kubectlDescribeByNamespace } from '../tools/kubectl-describe-by-ns';
 import { kubectlLogsByNamespace } from '../tools/kubectl-logs-by-ns';
+import { kubectlEventsByNamespace } from '../tools/kubectl-events-by-ns';
 import { findK8sResourcesByNamespace } from '../tools/find-k8s-resources-by-ns';
 import { listSupportedK8sResources } from '../tools/list-supported-k8s-resources';
 import { searchText, readTextSlice, listTextFiles } from '../tools/text-file-tools';
@@ -88,6 +90,7 @@ const registry = [
   namespaceTool(KUBECTL_GET_BY_NS_TOOL, 'kubernetes', kubectlGetByNamespace),
   namespaceTool(KUBECTL_DESCRIBE_BY_NS_TOOL, 'kubernetes', kubectlDescribeByNamespace),
   namespaceTool(KUBECTL_LOGS_BY_NS_TOOL, 'kubernetes', kubectlLogsByNamespace),
+  namespaceTool(KUBECTL_EVENTS_BY_NS_TOOL, 'kubernetes', kubectlEventsByNamespace),
   namespaceTool(LIST_PODS_BY_NS_TOOL, 'kubernetes', listPodsByNamespace),
   namespaceTool(LIST_DEVBOX_BY_NS_TOOL, 'sealos_crd', listDevboxByNamespace),
   namespaceTool(LIST_CLUSTER_BY_NS_TOOL, 'sealos_crd', listClusterByNamespace),

@@ -351,11 +351,12 @@ export const KubectlGetByNsInputSchema = z.object({
   labelSelector: z.string().min(1).max(512).optional(),
   fieldSelector: z.string().min(1).max(512).optional(),
   limit: z.number().int().positive().max(100).optional(),
+  output: z.enum(['summary', 'yaml']).optional(),
 });
 export type KubectlGetByNsInput = z.infer<typeof KubectlGetByNsInputSchema>;
 export const KUBECTL_GET_BY_NS_TOOL = {
   name: 'kubectl_get_by_ns',
-  description: 'Controlled kubectl get for supported namespace-scoped resources. Use resource plus optional name, apiVersion, labelSelector, fieldSelector, and limit. Returns raw-like sanitized manifests: Secret values are never returned, ConfigMap values are not returned, and sensitive fields are redacted.',
+  description: 'Controlled kubectl get for supported namespace-scoped resources. Use output="summary" or omit output for broad resource scanning and target discovery. Use output="yaml" only with an exact name for sanitized detail evidence. Secret values are never returned, ConfigMap values are not returned, and sensitive fields are redacted.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -366,6 +367,7 @@ export const KUBECTL_GET_BY_NS_TOOL = {
       labelSelector: { type: 'string' },
       fieldSelector: { type: 'string' },
       limit: { type: 'number' },
+      output: { type: 'string', enum: ['summary', 'yaml'] },
     },
     required: ['namespace', 'resource'],
   },
@@ -380,7 +382,7 @@ export const KubectlDescribeByNsInputSchema = z.object({
 export type KubectlDescribeByNsInput = z.infer<typeof KubectlDescribeByNsInputSchema>;
 export const KUBECTL_DESCRIBE_BY_NS_TOOL = {
   name: 'kubectl_describe_by_ns',
-  description: 'Controlled kubectl describe for one supported namespace-scoped resource by resource/name. Returns a sanitized manifest and related events. Use this after kubectl_get_by_ns identifies the target.',
+  description: 'Controlled kubectl describe for one supported namespace-scoped resource by resource/name. Returns diagnostic summary, related events, related resources, and sanitized manifest evidence. Use this only after a target resource name is known.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -410,7 +412,7 @@ export const KubectlLogsByNsInputSchema = z.object({
 export type KubectlLogsByNsInput = z.infer<typeof KubectlLogsByNsInputSchema>;
 export const KUBECTL_LOGS_BY_NS_TOOL = {
   name: 'kubectl_logs_by_ns',
-  description: 'Controlled kubectl logs for namespace pods. Use podName or labelSelector, with optional container, allContainers, previous, tailLines, sinceSeconds, limitBytes, and timestamps. Does not follow logs.',
+  description: 'Controlled kubectl logs for namespace pods. Use podName or labelSelector. By default it behaves like kubectl logs pod-name -n namespace and reads one regular container; provide container for multi-container pods or allContainers=true when multiple regular containers are intended. Supports previous, tailLines, sinceSeconds, limitBytes, and timestamps. Does not follow logs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -424,6 +426,34 @@ export const KUBECTL_LOGS_BY_NS_TOOL = {
       sinceSeconds: { type: 'number' },
       limitBytes: { type: 'number' },
       timestamps: { type: 'boolean' },
+    },
+    required: ['namespace'],
+  },
+};
+
+export const KubectlEventsByNsInputSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+  resource: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+  apiVersion: z.string().min(1).optional(),
+  type: z.enum(['Warning', 'Normal']).optional(),
+  reason: z.string().min(1).max(128).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+export type KubectlEventsByNsInput = z.infer<typeof KubectlEventsByNsInputSchema>;
+export const KUBECTL_EVENTS_BY_NS_TOOL = {
+  name: 'kubectl_events_by_ns',
+  description: 'Controlled kubectl get events for a namespace, optionally filtered by resource/name, type, and reason. Use this for Kubernetes event evidence such as FailedScheduling, Unhealthy, BackOff, Pulled, Created, Started, endpoint changes, ingress or certificate events.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      namespace: { type: 'string' },
+      resource: { type: 'string' },
+      name: { type: 'string' },
+      apiVersion: { type: 'string' },
+      type: { type: 'string', enum: ['Warning', 'Normal'] },
+      reason: { type: 'string' },
+      limit: { type: 'number' },
     },
     required: ['namespace'],
   },

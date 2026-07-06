@@ -14,6 +14,241 @@ export interface KubernetesError {
   details?: any;
 }
 
+export interface ResourceRef {
+  apiVersion?: string;
+  kind: string;
+  namespace?: string;
+  name: string;
+  role?: string;
+}
+
+export interface OmittedField {
+  path: string;
+  reason: string;
+  count?: number;
+}
+
+export interface ContainerStatusProjection {
+  name: string;
+  ready?: boolean;
+  restartCount?: number;
+  state?: string;
+  reason?: string;
+  message?: string;
+  lastTerminationReason?: string;
+}
+
+export interface EndpointProjection {
+  serviceName: string;
+  ready: number;
+  notReady: number;
+  ports: string[];
+  source: 'endpoints' | 'endpointslice' | 'none';
+  error?: KubernetesError;
+}
+
+export interface ReplicaProjection {
+  desired?: number;
+  ready?: number;
+  available?: number;
+  updated?: number;
+  unavailable?: number;
+}
+
+export interface StatusProjection {
+  phase?: string;
+  ready?: string | boolean;
+  reason?: string;
+  message?: string;
+  conditions: ConditionSummary[];
+  replicas?: ReplicaProjection;
+  containers?: ContainerStatusProjection[];
+  endpoints?: EndpointProjection[];
+}
+
+export interface SpecProjection {
+  selector?: Record<string, string>;
+  ports?: string[];
+  images?: string[];
+  hosts?: string[];
+  paths?: string[];
+  backendServices?: ResourceRef[];
+  tlsSecrets?: ResourceRef[];
+  uses?: {
+    configMaps?: ResourceRef[];
+    secrets?: ResourceRef[];
+    pvcs?: ResourceRef[];
+    serviceAccount?: ResourceRef;
+  };
+}
+
+export interface KubernetesResourceSummary {
+  apiVersion: string;
+  kind: string;
+  name: string;
+  namespace: string;
+  age?: string;
+  labels?: Record<string, string>;
+  annotationKeys?: string[];
+  owners: ResourceRef[];
+  status: StatusProjection;
+  spec: SpecProjection;
+  diagnosticSignals: string[];
+  refs: ResourceRef[];
+  omitted: OmittedField[];
+}
+
+export interface KubernetesListCoverage {
+  status: 'complete' | 'partial';
+  pages: number;
+  returned: number;
+  remainingItemCount?: number;
+  truncated: boolean;
+  message?: string;
+}
+
+export interface KubernetesDetailCoverage {
+  status: 'complete' | 'partial';
+  truncated: boolean;
+  omittedSections: string[];
+  message?: string;
+}
+
+export interface KubectlGetListResult {
+  success: boolean;
+  namespace: string;
+  resource: string;
+  apiVersion: string;
+  kind: string;
+  mode: 'list';
+  output: 'summary';
+  labelSelector?: string;
+  fieldSelector?: string;
+  limit?: number;
+  items: KubernetesResourceSummary[];
+  total: number;
+  coverage: KubernetesListCoverage;
+  redactions: Array<{ path: string; reason: string }>;
+  error?: KubernetesError;
+}
+
+export interface KubectlGetDetailResult {
+  success: boolean;
+  namespace: string;
+  resource: string;
+  apiVersion: string;
+  kind: string;
+  name: string;
+  mode: 'detail';
+  output: 'yaml';
+  manifest?: unknown;
+  summary?: KubernetesResourceSummary;
+  redactions: Array<{ path: string; reason: string }>;
+  omitted: OmittedField[];
+  coverage: KubernetesDetailCoverage;
+  error?: KubernetesError;
+}
+
+export interface DescribeDiagnosis {
+  health: 'healthy' | 'degraded' | 'unknown';
+  primarySignals: string[];
+  failedConditions: ConditionSummary[];
+  nextChecks: string[];
+  evidenceGaps: string[];
+}
+
+export interface RelatedResourceBlock {
+  role: string;
+  items: ResourceRef[];
+  truncated: boolean;
+  error?: KubernetesError;
+}
+
+export interface KubectlDescribeResult {
+  success: boolean;
+  namespace: string;
+  resource: string;
+  apiVersion: string;
+  kind: string;
+  name: string;
+  summary?: KubernetesResourceSummary;
+  diagnosis?: DescribeDiagnosis;
+  relatedEvents: EventInfo[];
+  relatedResources?: RelatedResourceBlock[];
+  manifest?: unknown;
+  redactions?: Array<{ path: string; reason: string }>;
+  omitted?: OmittedField[];
+  error?: KubernetesError;
+}
+
+export interface LogSourceResult {
+  podName: string;
+  containerName: string;
+  previous: boolean;
+  logs: string;
+  lineCount: number;
+  empty: boolean;
+  truncated: boolean;
+  error?: KubernetesError;
+}
+
+export interface PodLogCandidate {
+  podName: string;
+  status?: string;
+  ready?: string;
+  restarts?: number;
+  containers: string[];
+  age?: string;
+}
+
+export interface LogsCoverage {
+  matchedPods: number;
+  queriedPods: number;
+  omittedPods: string[];
+  queriedSources: number;
+  truncated: boolean;
+  message?: string;
+}
+
+export interface KubectlLogsResult {
+  success: boolean;
+  namespace: string;
+  podName?: string;
+  labelSelector?: string;
+  container?: string;
+  allContainers?: boolean;
+  previous?: boolean;
+  tailLines: number;
+  sinceSeconds?: number;
+  timestamps: boolean;
+  limitBytes?: number;
+  sources: LogSourceResult[];
+  podCandidates?: PodLogCandidate[];
+  containerCandidates?: string[];
+  coverage: LogsCoverage;
+  resolution?: 'resolved' | 'no_match' | 'ambiguous_container' | 'partial';
+  message?: string;
+  error?: KubernetesError;
+}
+
+export interface EventsCoverage {
+  returned: number;
+  limit: number;
+  truncated: boolean;
+  fieldSelector?: string;
+}
+
+export interface KubectlEventsResult {
+  success: boolean;
+  namespace: string;
+  resource?: string;
+  name?: string;
+  events: EventInfo[];
+  total: number;
+  coverage: EventsCoverage;
+  error?: KubernetesError;
+}
+
 export interface ListPodsResponse {
   namespace: string;
   pods: PodInfo[];

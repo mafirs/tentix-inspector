@@ -198,7 +198,7 @@ type RouterMessageContentItem =
   | { type: 'image_url'; image_url: { url: string } };
 
 const MODEL_OBSERVATION_ENTRIES = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_ENTRIES, 10, 30);
-const MODEL_OBSERVATION_CHARS = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_CHARS, 32_000, 120_000);
+const MODEL_OBSERVATION_CHARS = parsePositiveIntegerEnv(process.env.AGENT_MODEL_OBSERVATION_CHARS, 96_000, 180_000);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -405,11 +405,15 @@ Investigation Rules:
 - Choose action "insufficient" when the issue likely needs platform-side, cross-namespace, Secret, shell, or unavailable evidence.
 - Select "none" only when the current turn is clearly just a greeting, thanks, acknowledgement, filler, or a pure conversational reply that does not require checking live cluster or namespace state.
 - Never request shell, raw kubeconfig, -A, platform namespace, system namespace, cluster-scoped resources, Secret data, connection strings, object storage access keys, or write operations.
-- Treat kubectl_get_by_ns, kubectl_describe_by_ns, and kubectl_logs_by_ns as the primary live namespace inspection tools for supported resources.
+- Treat kubectl_get_by_ns, kubectl_describe_by_ns, kubectl_logs_by_ns, and kubectl_events_by_ns as the primary live namespace inspection tools for supported resources.
 - Use find_k8s_resources_by_ns as the primary live target-locating tool when the user provides a likely resource name, app name, domain, service name, or pod prefix.
+- If the ticket does not contain a concrete target name, use multiple ordinary kubectl_get_by_ns calls with output="summary" on relevant high-frequency or semantically relevant supported resources, such as devboxes, pods, statefulsets, deployments, clusters, services, ingresses, events, or other supported resources selected from the ticket context. Do not treat this example set as exhaustive.
 - Use list_supported_k8s_resources when you are unsure which resource name, alias, or apiVersion to use.
-- Use kubectl_get_by_ns for resource discovery, name lookup, labelSelector lookup, and raw-like sanitized manifest evidence.
-- Use kubectl_describe_by_ns only after a target resource name is known.
+- Use kubectl_get_by_ns with output="summary" for resource discovery, name lookup, labelSelector lookup, and broad first-pass scans.
+- Use kubectl_get_by_ns with output="yaml" only after an exact resource name is known and sanitized object detail is needed.
+- Use kubectl_describe_by_ns only after a target resource name is known and diagnosis, conditions, related resources, or related events are needed.
+- Use kubectl_events_by_ns for event evidence, either namespace-wide during first-pass scans or filtered by resource/name after a target is known.
+- For access failures, inspect Service/Ingress endpoint readiness in kubectl_get_by_ns or kubectl_describe_by_ns observations. A Service or Ingress that exists but has ready=0 endpoints is concrete evidence of routing or selector/backend mismatch.
 - Use kubectl_logs_by_ns when podName or labelSelector is known. Use get_logs_by_ns only when the user asks for logs but the target pod is not yet known and automatic resolution is useful.
 - Never ask for ConfigMap values. The server only returns ConfigMap keys and sizes.
 - Knowledge and source search results are context, not live cluster state.
@@ -421,19 +425,19 @@ Investigation Rules:
 - Do not repeat the same tool with the same input unless you explain what new evidence it can produce.
 - If the user is still troubleshooting, is asking about current status, is correcting the previous target, or is asking about any live issue related to namespace resources, do not select "none".
 - If the request may depend on current cluster or namespace state, do not select "none" just because the latest message is short or ambiguous.
-- If the user mentions public access, external access, 公网, 外网, domain, 域名, CNAME, host, route, ingress, external IP, HTTPS, SSL, certificate, 证书, port exposure, or "访问不到", prefer "list_ingress_by_ns" as the first live-state check unless the request is specifically about certificate issuance or renewal status.
+- If the user mentions public access, external access, 公网, 外网, domain, 域名, CNAME, host, route, ingress, external IP, HTTPS, SSL, certificate, 证书, port exposure, or "访问不到", prefer kubectl_get_by_ns with resource="ingresses" and output="summary" as the first live-state check unless a concrete target should be located by find_k8s_resources_by_ns or the request is specifically about certificate issuance or renewal status.
 - If the user specifically asks about certificate issuance, renewal, or secure certificate status after domain configuration, prefer "list_certificate_by_ns".
 - If the user mentions 欠费, 余额不足, 扣费, 充值后, 费用异常, suspend, release, 被释放, 停服, or post-recharge abnormality, prefer "list_debt_by_ns".
-- If the user mentions DevBox, devbox, VS Code, Cursor, Trae, SSH, remote connection, IDE connection, DevBox startup, restart, release, sharing, or DevBox availability, prefer "list_devbox_by_ns".
+- If the user mentions DevBox, devbox, VS Code, Cursor, Trae, SSH, remote connection, IDE connection, DevBox startup, restart, release, sharing, or DevBox availability, prefer kubectl_get_by_ns with resource="devboxes" and output="summary".
 - If the user explicitly asks for logs, stdout, stderr, stack trace, or runtime output and a podName or labelSelector is known, prefer "kubectl_logs_by_ns"; otherwise use "get_logs_by_ns" or first identify the pod with "kubectl_get_by_ns".
 - When several tools look possible, choose the tool that is the best first live-state inspection for the user's current complaint. Do not choose "none" merely because the message is brief.
 
 Examples:
 User: 远程连接不上
-Return: {"action":"tool","selectedTool":"list_devbox_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"DevBox connectivity needs live namespace evidence"}
+Return: {"action":"tool","selectedTool":"kubectl_get_by_ns","toolInput":{"resource":"devboxes","output":"summary"},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"DevBox connectivity needs DevBox summary state"}
 
 User: Trae无法连接
-Return: {"action":"tool","selectedTool":"list_devbox_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"DevBox IDE connectivity needs DevBox status"}
+Return: {"action":"tool","selectedTool":"kubectl_get_by_ns","toolInput":{"resource":"devboxes","output":"summary"},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"DevBox IDE connectivity needs DevBox status"}
 
 User: 余额不足被释放了
 Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"billing suspension should inspect debt state"}
@@ -442,16 +446,16 @@ User: 充钱后中的项目还是找不到
 Return: {"action":"tool","selectedTool":"list_debt_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"post-recharge recovery should inspect debt state"}
 
 User: 公网域名无法访问
-Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"external access should inspect ingress first"}
+Return: {"action":"tool","selectedTool":"kubectl_get_by_ns","toolInput":{"resource":"ingresses","output":"summary"},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"external access should inspect ingress summary first"}
 
 User: xrouter应用无法访问，显示 Node is not ready
 Return: {"action":"tool","selectedTool":"find_k8s_resources_by_ns","toolInput":{"query":"xrouter"},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"the ticket includes a concrete App Launchpad target name and needs resource locating before drilldown"}
 
 User: 如何查看应用的对外ip？
-Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"external IP is exposed by ingress state"}
+Return: {"action":"tool","selectedTool":"kubectl_get_by_ns","toolInput":{"resource":"ingresses","output":"summary"},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"external IP is exposed by ingress state"}
 
 User: ingress
-Return: {"action":"tool","selectedTool":"list_ingress_by_ns","toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"ingress request needs ingress state"}
+Return: {"action":"tool","selectedTool":"kubectl_get_by_ns","toolInput":{"resource":"ingresses","output":"summary"},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"ingress request needs ingress state"}
 
 User: 谢谢，知道了
 Return: {"action":"none","selectedTool":null,"toolInput":{},"finalAnswer":null,"customerReplyDraft":null,"missingEvidence":[],"escalationAdvice":[],"reason":"acknowledgement only"}
@@ -477,9 +481,10 @@ Note:
 - missingEvidence and escalationAdvice must always be arrays of strings. Use [] when empty.
 - Do not add namespace into toolInput. The server injects trusted namespace.
 - For find_k8s_resources_by_ns, provide query. Use resourceTypes only when you already know the target class; omit it for the default resource set. Secrets require explicit resourceTypes=["secrets"].
-- For kubectl_get_by_ns, provide resource plus optional name, apiVersion, labelSelector, fieldSelector, and limit.
+- For kubectl_get_by_ns, provide resource plus optional name, apiVersion, labelSelector, fieldSelector, limit, and output. Use output="summary" for broad scans. Use output="yaml" only with name.
 - For kubectl_describe_by_ns, provide resource and name only when evidence already identifies a target resource.
 - For kubectl_logs_by_ns, provide podName or labelSelector. Provide container when the target pod has multiple containers unless allContainers is intended.
+- For kubectl_events_by_ns, provide resource and name when filtering events to one target; otherwise omit them for namespace event scan.
 - Do not add namespace into toolInput. The server injects trusted namespace.
 `;
 

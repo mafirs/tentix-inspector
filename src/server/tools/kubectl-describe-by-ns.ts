@@ -1,8 +1,14 @@
 import { KubernetesClient } from '../kubernetes/client';
-import { extractKubernetesError } from './common';
+import {
+  buildDescribeDiagnosis,
+  buildEventSummary,
+  buildRelatedResourceBlocks,
+  buildResourceSummary,
+  extractKubernetesError,
+} from './common';
 import { KubectlDescribeByNsInput, KubectlDescribeByNsInputSchema } from './types';
 import { findKubectlResource } from './kubectl-resource-registry';
-import { listRelatedEvents, readKubectlResource } from './kubectl-resource-reader';
+import { listRelatedEvents, listServiceEndpointReadiness, readKubectlResource } from './kubectl-resource-reader';
 import { sanitizeKubernetesObject } from './kubectl-sanitize';
 
 export async function kubectlDescribeByNamespace(
@@ -28,7 +34,17 @@ export async function kubectlDescribeByNamespace(
   try {
     const rawObject = await readKubectlResource(client, resourceDefinition, namespace, name);
     const sanitized = sanitizeKubernetesObject(rawObject, resourceDefinition);
-    const relatedEvents = await listRelatedEvents(client, namespace, name);
+    const relatedEvents = (await listRelatedEvents(client, namespace, name)).map(buildEventSummary);
+    const initialSummary = buildResourceSummary(sanitized.object, resourceDefinition, namespace);
+    const serviceNames = resourceDefinition.resource === 'services'
+      ? [name]
+      : initialSummary.spec.backendServices?.map((service) => service.name) ?? [];
+    const endpointReadinessByService = serviceNames.length > 0
+      ? await listServiceEndpointReadiness(client, namespace, serviceNames)
+      : undefined;
+    const summary = buildResourceSummary(sanitized.object, resourceDefinition, namespace, { endpointReadinessByService });
+    const diagnosis = buildDescribeDiagnosis(summary, relatedEvents);
+    const relatedResources = buildRelatedResourceBlocks(summary);
 
     return {
       namespace,
@@ -36,9 +52,13 @@ export async function kubectlDescribeByNamespace(
       apiVersion: resourceDefinition.apiVersion,
       kind: resourceDefinition.kind,
       name,
+      summary,
+      diagnosis,
+      relatedResources,
       manifest: sanitized.object,
       relatedEvents,
       redactions: sanitized.redactions,
+      omitted: summary.omitted,
       success: true,
     };
   } catch (error) {
@@ -54,7 +74,11 @@ export async function kubectlDescribeByNamespace(
       apiVersion: resourceDefinition.apiVersion,
       kind: resourceDefinition.kind,
       name,
+      summary: undefined,
+      diagnosis: undefined,
+      relatedResources: [],
       relatedEvents: [],
+      omitted: [],
       error: k8sError,
       success: false,
     };

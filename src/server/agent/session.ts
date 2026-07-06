@@ -15,8 +15,8 @@ import {
 const DEFAULT_MAX_TURNS = Number(process.env.AGENT_MAX_TURNS ?? 16);
 const DEFAULT_MAX_TOOL_CALLS = Number(process.env.AGENT_MAX_TOOL_CALLS ?? 12);
 const DEFAULT_MAX_RUNTIME_MS = Number(process.env.AGENT_MAX_RUNTIME_MS ?? 180_000);
-const DEFAULT_MAX_EVIDENCE_CHARS = Number(process.env.AGENT_MAX_EVIDENCE_CHARS ?? 60_000);
-const DEFAULT_TOOL_RESULT_PREVIEW_CHARS = Number(process.env.AGENT_TOOL_RESULT_PREVIEW_CHARS ?? 8_000);
+const DEFAULT_MAX_EVIDENCE_CHARS = Number(process.env.AGENT_MAX_EVIDENCE_CHARS ?? 180_000);
+const DEFAULT_TOOL_RESULT_PREVIEW_CHARS = Number(process.env.AGENT_TOOL_RESULT_PREVIEW_CHARS ?? 32_000);
 
 export async function runAgentSession(params: RunAgentSessionParams): Promise<AgentSessionResult | { tool: 'none' }> {
   const traceId = randomUUID();
