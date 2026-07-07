@@ -64,6 +64,7 @@ export function renderToolObservation(toolName: string, result: unknown): string
   appendCollection(lines, 'omitted', record.omitted, renderOmittedRow);
   appendCollection(lines, 'sources', record.sources, renderLogSourceRow);
   appendCollection(lines, 'podCandidates', record.podCandidates, renderPodCandidateRow);
+  appendCollection(lines, 'ports', record.ports, renderListeningPortRow);
 
   const manifest = asRecord(record.manifest);
   if (manifest) {
@@ -76,6 +77,7 @@ export function renderToolObservation(toolName: string, result: unknown): string
     lines.push(`resolution=${resolution}`);
   }
   appendCollection(lines, 'containerCandidates', record.containerCandidates, renderPrimitiveRow);
+  appendSingle(lines, 'diskUsage', record.diskUsage, renderDiskUsageRow);
   appendTextBlock(lines, 'content', record.content, MAX_TEXT_CHARS);
   appendTextBlock(lines, 'logs', record.logs, MAX_LOG_CHARS);
 
@@ -156,6 +158,19 @@ function appendCollection(
   if (items.length > MAX_ROWS) {
     lines.push(`- ... ${items.length - MAX_ROWS} more`);
   }
+}
+
+function appendSingle(
+  lines: string[],
+  label: string,
+  value: unknown,
+  render: (item: unknown) => string
+): void {
+  if (value === undefined || value === null) {
+    return;
+  }
+  lines.push(`${label}:`);
+  lines.push(`- ${render(value)}`);
 }
 
 function appendIndexedCollection(
@@ -405,6 +420,34 @@ function renderLogSourceRow(value: unknown): string {
     named('truncated', record.truncated),
     named('error', formatError(record.error)),
     named('logs', logText),
+  ]);
+}
+
+function renderListeningPortRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  return joinParts([
+    named('protocol', record.protocol),
+    named('address', record.localAddress),
+    named('port', record.port),
+    named('state', record.state),
+    named('source', record.source),
+  ]);
+}
+
+function renderDiskUsageRow(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return renderPrimitiveRow(value);
+  }
+
+  return joinParts([
+    named('path', record.path),
+    named('size', record.sizeHuman),
+    named('source', record.source),
   ]);
 }
 

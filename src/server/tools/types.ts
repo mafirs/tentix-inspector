@@ -459,6 +459,58 @@ export const KUBECTL_EVENTS_BY_NS_TOOL = {
   },
 };
 
+const PodExecTargetInputBaseSchema = z.object({
+  namespace: z.string().min(1, 'Namespace is required'),
+  podName: z.string().min(1).max(253).optional(),
+  labelSelector: z.string().min(1).max(512).optional(),
+  container: z.string().min(1).max(128).optional(),
+});
+const PodExecTargetInputSchema = PodExecTargetInputBaseSchema.refine((input) => Boolean(input.podName || input.labelSelector), {
+  message: 'podName or labelSelector is required',
+});
+
+export const ListPodListeningPortsByNsInputSchema = PodExecTargetInputSchema;
+export type ListPodListeningPortsByNsInput = z.infer<typeof ListPodListeningPortsByNsInputSchema>;
+export const LIST_POD_LISTENING_PORTS_BY_NS_TOOL = {
+  name: 'list_pod_listening_ports_by_ns',
+  description: 'List ports that are actually listening inside one namespace pod/container using controlled read-only probes. Use podName or labelSelector and optional container. The model must not provide command, args, flags, shell text, or namespace; the server injects namespace and runs fixed no-stdin/no-tty probes only.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      namespace: { type: 'string' },
+      podName: { type: 'string' },
+      labelSelector: { type: 'string' },
+      container: { type: 'string' },
+    },
+    required: ['namespace'],
+  },
+};
+
+export const DuSummaryByNsInputSchema = PodExecTargetInputBaseSchema.extend({
+  path: z.string()
+    .min(1)
+    .max(512)
+    .regex(/^\/[^\0\r\n]*$/, 'path must be an absolute container path without control characters'),
+}).refine((input) => Boolean(input.podName || input.labelSelector), {
+  message: 'podName or labelSelector is required',
+});
+export type DuSummaryByNsInput = z.infer<typeof DuSummaryByNsInputSchema>;
+export const DU_SUMMARY_BY_NS_TOOL = {
+  name: 'du_summary_by_ns',
+  description: 'Return du -sh style disk usage for one absolute path inside one namespace pod/container using controlled read-only probes. Use podName or labelSelector, path, and optional container. The path is data only; the server rejects unsafe paths and never lets the model provide command, args, flags, shell text, or namespace.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      namespace: { type: 'string' },
+      podName: { type: 'string' },
+      labelSelector: { type: 'string' },
+      container: { type: 'string' },
+      path: { type: 'string' },
+    },
+    required: ['namespace', 'path'],
+  },
+};
+
 export const FindK8sResourcesByNsInputSchema = z.object({
   namespace: z.string().min(1, 'Namespace is required'),
   query: z.string().min(1, 'Query is required').max(120),

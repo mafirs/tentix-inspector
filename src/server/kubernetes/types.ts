@@ -231,6 +231,88 @@ export interface KubectlLogsResult {
   error?: KubernetesError;
 }
 
+export interface PodExecTargetCandidate {
+  podName: string;
+  status?: string;
+  ready?: string;
+  restarts?: number;
+  containers: string[];
+  age?: string;
+}
+
+export interface PodExecTargetCoverage {
+  matchedPods: number;
+  queriedPods: number;
+  omittedPods: string[];
+  truncated: boolean;
+  message?: string;
+}
+
+export type PodExecToolResolution =
+  | 'resolved'
+  | 'no_match'
+  | 'ambiguous_pod'
+  | 'ambiguous_container'
+  | 'invalid_container'
+  | 'pod_not_running'
+  | 'invalid_input'
+  | 'unavailable'
+  | 'command_failed';
+
+export interface ListeningPort {
+  protocol: string;
+  localAddress: string;
+  port: number;
+  state?: string;
+  source: 'ss' | 'netstat' | 'proc';
+}
+
+export interface ListPodListeningPortsResult {
+  success: boolean;
+  namespace: string;
+  podName?: string;
+  labelSelector?: string;
+  container?: string;
+  resolvedPodName?: string;
+  resolvedContainerName?: string;
+  ports: ListeningPort[];
+  total: number;
+  coverage: PodExecTargetCoverage;
+  resolution: PodExecToolResolution;
+  probe?: string;
+  commandPath?: string;
+  podCandidates?: PodExecTargetCandidate[];
+  containerCandidates?: string[];
+  message?: string;
+  error?: KubernetesError;
+}
+
+export interface DiskUsageSummary {
+  path: string;
+  sizeHuman: string;
+  source: 'du';
+}
+
+export interface DuSummaryResult {
+  success: boolean;
+  namespace: string;
+  podName?: string;
+  labelSelector?: string;
+  container?: string;
+  resolvedPodName?: string;
+  resolvedContainerName?: string;
+  path: string;
+  diskUsage?: DiskUsageSummary;
+  total: number;
+  coverage: PodExecTargetCoverage;
+  resolution: PodExecToolResolution;
+  commandPath?: string;
+  podCandidates?: PodExecTargetCandidate[];
+  containerCandidates?: string[];
+  message?: string;
+  error?: KubernetesError;
+}
+
 export interface EventsCoverage {
   returned: number;
   limit: number;

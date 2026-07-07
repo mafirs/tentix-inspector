@@ -402,10 +402,12 @@ Investigation Rules:
 - When a list/get observation says details were omitted or truncated, do not infer absence from missing detail rows. Narrow by target name, selector, or find_k8s_resources_by_ns.
 - Choose action "tool" when one more allowed read-only tool can add useful evidence.
 - Choose action "final" when the current namespace evidence is enough to answer.
-- Choose action "insufficient" when the issue likely needs platform-side, cross-namespace, Secret, shell, or unavailable evidence.
+- Choose action "insufficient" when the issue likely needs platform-side, cross-namespace, Secret, arbitrary shell, or unavailable evidence.
 - Select "none" only when the current turn is clearly just a greeting, thanks, acknowledgement, filler, or a pure conversational reply that does not require checking live cluster or namespace state.
 - Never request shell, raw kubeconfig, -A, platform namespace, system namespace, cluster-scoped resources, Secret data, connection strings, object storage access keys, or write operations.
 - Treat kubectl_get_by_ns, kubectl_describe_by_ns, kubectl_logs_by_ns, and kubectl_events_by_ns as the primary live namespace inspection tools for supported resources.
+- Use list_pod_listening_ports_by_ns only when the ticket needs evidence of ports actually listening inside a known pod/container. This is a controlled probe; do not provide command, args, flags, shell text, or namespace.
+- Use du_summary_by_ns only when the ticket needs disk usage for a specific absolute path inside a known pod/container. Provide path only as data; do not provide command, args, flags, shell text, or namespace.
 - Use find_k8s_resources_by_ns as the primary live target-locating tool when the user provides a likely resource name, app name, domain, service name, or pod prefix.
 - If the ticket does not contain a concrete target name, use multiple ordinary kubectl_get_by_ns calls with output="summary" on relevant high-frequency or semantically relevant supported resources, such as devboxes, pods, statefulsets, deployments, clusters, services, ingresses, events, or other supported resources selected from the ticket context. Do not treat this example set as exhaustive.
 - Use list_supported_k8s_resources when you are unsure which resource name, alias, or apiVersion to use.
@@ -430,6 +432,8 @@ Investigation Rules:
 - If the user mentions 欠费, 余额不足, 扣费, 充值后, 费用异常, suspend, release, 被释放, 停服, or post-recharge abnormality, prefer "list_debt_by_ns".
 - If the user mentions DevBox, devbox, VS Code, Cursor, Trae, SSH, remote connection, IDE connection, DevBox startup, restart, release, sharing, or DevBox availability, prefer kubectl_get_by_ns with resource="devboxes" and output="summary".
 - If the user explicitly asks for logs, stdout, stderr, stack trace, or runtime output and a podName or labelSelector is known, prefer "kubectl_logs_by_ns"; otherwise use "get_logs_by_ns" or first identify the pod with "kubectl_get_by_ns".
+- If the user asks which ports are listening inside a pod/container and a podName or labelSelector is known, prefer "list_pod_listening_ports_by_ns"; otherwise first identify the pod with "kubectl_get_by_ns" or "find_k8s_resources_by_ns".
+- If the user asks for du, disk usage, directory size, or path usage inside a pod/container and a podName or labelSelector plus an absolute path are known, prefer "du_summary_by_ns"; otherwise first identify the pod or ask for the missing path in the final response.
 - When several tools look possible, choose the tool that is the best first live-state inspection for the user's current complaint. Do not choose "none" merely because the message is brief.
 
 Examples:
@@ -485,6 +489,8 @@ Note:
 - For kubectl_describe_by_ns, provide resource and name only when evidence already identifies a target resource.
 - For kubectl_logs_by_ns, provide podName or labelSelector. Provide container when the target pod has multiple containers unless allContainers is intended.
 - For kubectl_events_by_ns, provide resource and name when filtering events to one target; otherwise omit them for namespace event scan.
+- For list_pod_listening_ports_by_ns, provide podName or labelSelector and optional container. Do not provide command, args, flags, or namespace.
+- For du_summary_by_ns, provide podName or labelSelector, path, and optional container. Do not provide command, args, flags, or namespace.
 - Do not add namespace into toolInput. The server injects trusted namespace.
 `;
 
